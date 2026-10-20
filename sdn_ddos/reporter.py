@@ -72,8 +72,8 @@ class ConsoleReporter:
 
     def normal(self, pair_id: str, detection: Detection) -> None:
         self._log.info(
-            "[ANÁLISE] %-34s PPS: %6.2f | Limite: %6.2f | Status: NORMAL",
-            pair_id, detection.pps, detection.limit,
+            "[ANÁLISE] %-34s PPS: %6.2f | Status: NORMAL",
+            pair_id, detection.pps,
         )
 
     def anomaly(self, pair_id: str, detection: Detection, required: int) -> None:
@@ -87,6 +87,12 @@ class ConsoleReporter:
             "    Sequência : %s/%s",
             pair_id, detection.pps, detection.mean, detection.std, detection.limit,
             detection.consecutive_anomalies, required,
+        )
+
+    def global_limits(self, mean: float, std: float, limit: float) -> None:
+        self._log.info(
+            "[LIMITES GLOBAIS] Média: %.2f PPS | Desvio: %.2f | Limite: %.2f PPS",
+            mean, std, limit,
         )
 
     # --- Mitigação -------------------------------------------------------
