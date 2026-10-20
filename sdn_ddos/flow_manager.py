@@ -45,15 +45,15 @@ class FlowManager:
         actions = [parser.OFPActionOutput(out_port)]
         self._add_flow(datapath, FORWARDING_PRIORITY, match, actions)
 
-    def install_drop(self, datapath: Any, ipv4_dst: str, hard_timeout: int) -> None:
-        """Descarta o tráfego IPv4 destinado ao host receptor ``ipv4_dst``.
+    def install_drop(self, datapath: Any, ipv4_src: str, hard_timeout: int) -> None:
+        """Descarta todo o tráfego IPv4 originado em ``ipv4_src``.
 
         Em OpenFlow 1.3, uma regra *sem instruções* significa descartar.
         O ``hard_timeout`` faz o próprio switch remover o bloqueio, então a
         mitigação termina mesmo que o controlador falhe.
         """
         parser = datapath.ofproto_parser
-        match = parser.OFPMatch(eth_type=ether_types.ETH_TYPE_IP, ipv4_dst=ipv4_dst)
+        match = parser.OFPMatch(eth_type=ether_types.ETH_TYPE_IP, ipv4_src=ipv4_src)
         self._send_flow_mod(
             datapath, BLOCK_PRIORITY, match, instructions=[], hard_timeout=hard_timeout
         )
