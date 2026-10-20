@@ -1,6 +1,6 @@
 # SDN DDoS Controller
 
-Controlador SDN desenvolvido em Python utilizando **OS-Ken**, **Mininet** e **Open vSwitch**, com monitoramento de tráfego, detecção estatística global de anomalias e bloqueio temporário de IPs.
+Controlador SDN desenvolvido em Python utilizando **OS-Ken**, **Mininet** e **Open vSwitch**, com monitoramento de tráfego, detecção estatística por par IP origem-destino e bloqueio temporário de IPs.
 
 ## 1. Instalar dependências
 
@@ -53,9 +53,9 @@ Execute `pingall` primeiro para o controlador aprender o IP dos hosts.
 
 ## 3. Simulando tráfego e detecção
 
-A linha de base global é formada pelas primeiras 5 medições do primeiro IP monitorado. O controlador contabiliza cópias dos pacotes e exclui o sentido de resposta dos fluxos: ICMP Echo Reply é ignorado; TCP usa SYN/SYN-ACK para reconhecer a direção iniciadora; UDP usa a primeira direção observada, pois o protocolo não define universalmente requisições e respostas. Essa regra para UDP é heurística. Nenhum destinatário precisa ser configurado.
+A linha de base é formada pelas primeiras 5 medições do primeiro par origem-destino observado. Cada par IP origem-destino é medido e avaliado separadamente. O controlador contabiliza cópias dos pacotes e exclui o sentido de resposta dos fluxos: ICMP Echo Reply é ignorado; TCP usa SYN/SYN-ACK para reconhecer a direção iniciadora; UDP usa a primeira direção observada, pois o protocolo não define universalmente requisições e respostas. Essa regra para UDP é heurística. Nenhum destinatário precisa ser configurado.
 
-Depois da calibração, somente taxas classificadas como normais atualizam o histórico global. Taxas anômalas não entram no cálculo, evitando que tráfego suspeito eleve a referência. O limite também possui um piso absoluto de 2 PPS, configurável, para reduzir falsos positivos quando a média e o desvio padrão ficam próximos de zero. O estado dos fluxos é expirado após inatividade, evitando crescimento ilimitado da memória. O primeiro host deve gerar tráfego normal durante a calibração.
+Depois da calibração, somente taxas classificadas como normais atualizam o histórico estatístico. Taxas anômalas não entram no cálculo, evitando que tráfego suspeito eleve a referência. O limite também possui um piso absoluto de 2 PPS, configurável, para reduzir falsos positivos quando a média e o desvio padrão ficam próximos de zero. O estado dos fluxos é expirado após inatividade, evitando crescimento ilimitado da memória. O primeiro host deve gerar tráfego normal durante a calibração.
 
 ### Tráfego normal
 
@@ -97,7 +97,7 @@ Em outro terminal:
 sudo ovs-ofctl -O OpenFlow13 dump-flows s1
 ```
 
-Durante um bloqueio, deve aparecer uma regra semelhante a:
+Durante um bloqueio, deve aparecer uma regra semelhante a. O IP de origem é bloqueado para todos os destinos:
 
 ```text
 priority=100,ip,nw_src=10.0.0.1 actions=drop
@@ -124,8 +124,8 @@ Os parâmetros são lidos de variáveis de ambiente com prefixo `SDN_DDOS_`. Os 
 | Variável | Padrão | Descrição |
 | --- | ---: | --- |
 | `SDN_DDOS_MONITOR_INTERVAL` | `5` | Segundos entre coletas de estatísticas |
-| `SDN_DDOS_BASELINE_SAMPLES` | `5` | Amostras do primeiro IP para formar a linha de base global (mín. 2) |
-| `SDN_DDOS_HISTORY_SIZE` | `20` | Janela deslizante de amostras normais do histórico global |
+| `SDN_DDOS_BASELINE_SAMPLES` | `5` | Amostras do primeiro par origem-destino para formar a linha de base estatística (mín. 2) |
+| `SDN_DDOS_HISTORY_SIZE` | `20` | Janela deslizante de amostras normais do histórico estatístico |
 | `SDN_DDOS_THRESHOLD_FACTOR` | `3` | Limite estatístico: média + fator × desvio padrão |
 | `SDN_DDOS_MIN_RATE_FACTOR` | `1.5` | Taxa também deve superar média × fator |
 | `SDN_DDOS_MINIMUM_PPS` | `2.0` | Piso absoluto do limite para evitar alertas quando a média é próxima de zero |
