@@ -181,13 +181,13 @@ class SdnDdosController(app_manager.OSKenApp):
             # Ignora portas reservadas (ex.: LOCAL), que não são hosts.
             if stat.port_no >= datapath.ofproto.OFPP_MAX:
                 continue
-            self._process_port(datapath, stat.port_no, stat.rx_packets, stat.rx_bytes)
+            self._process_port(datapath, stat.port_no, stat.tx_packets, stat.tx_bytes)
 
     def _process_port(self, datapath: Any, port: int, rx_packets: int, rx_bytes: int) -> None:
-        """Mede, exibe e analisa o tráfego recebido numa porta."""
+        """Mede o tráfego enviado pelo switch ao host conectado à porta."""
         dpid = datapath.id
 
-        # Usa rx (e não tx): mede o que o host *envia* para a rede.
+        # Usa tx: mede os pacotes que o host conectado à porta recebe.
         rate = self._rates.update((dpid, port), rx_packets, rx_bytes)
         if rate is None:
             return
