@@ -42,7 +42,14 @@ class FlowManager:
         """
         parser = datapath.ofproto_parser
         match = parser.OFPMatch(in_port=in_port, eth_dst=eth_dst)
-        actions = [parser.OFPActionOutput(out_port)]
+        actions = [
+            parser.OFPActionOutput(out_port),
+            # Espelha cópias ao controlador para contabilizar cada pacote.
+            parser.OFPActionOutput(
+                datapath.ofproto.OFPP_CONTROLLER,
+                datapath.ofproto.OFPCML_NO_BUFFER,
+            ),
+        ]
         self._add_flow(datapath, FORWARDING_PRIORITY, match, actions)
 
     def install_drop(self, datapath: Any, ipv4_src: str, hard_timeout: int) -> None:
