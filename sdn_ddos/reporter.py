@@ -56,36 +56,36 @@ class ConsoleReporter:
 
     # --- Tráfego e detecção ------------------------------------------------
 
-    def traffic(self, ip: str, rate: PortRate, blocked: bool) -> None:
+    def traffic(self, src: str, dst: str, rate: PortRate, blocked: bool) -> None:
         self._log.info(
-            "[TRÁFEGO] IP: %-15s | PPS iniciadores: %6.2f | Bytes/s: %9.2f | "
-            "Pkts: %-4s | %s",
-            ip, rate.pps, rate.bps, rate.delta_packets,
+            "[TRÁFEGO] Origem: %-15s | Destino: %-15s | PPS: %6.2f | "
+            "Bytes/s: %9.2f | Pkts: %-4s | %s",
+            src, dst, rate.pps, rate.bps, rate.delta_packets,
             "BLOQUEADO" if blocked else "NORMAL",
         )
 
-    def baseline(self, ip: str, detection: Detection, required: int) -> None:
+    def baseline(self, pair_id: str, detection: Detection, required: int) -> None:
         self._log.info(
-            "[BASELINE] %-15s Amostra %s/%s | PPS: %.2f",
-            ip, detection.baseline_size, required, detection.pps,
+            "[BASELINE] %-34s Amostra %s/%s | PPS: %.2f",
+            pair_id, detection.baseline_size, required, detection.pps,
         )
 
-    def normal(self, ip: str, detection: Detection) -> None:
+    def normal(self, pair_id: str, detection: Detection) -> None:
         self._log.info(
-            "[ANÁLISE] %-15s PPS: %6.2f | Limite: %6.2f | Status: NORMAL",
-            ip, detection.pps, detection.limit,
+            "[ANÁLISE] %-34s PPS: %6.2f | Limite: %6.2f | Status: NORMAL",
+            pair_id, detection.pps, detection.limit,
         )
 
-    def anomaly(self, ip: str, detection: Detection, required: int) -> None:
+    def anomaly(self, pair_id: str, detection: Detection, required: int) -> None:
         self._log.warning(
             "\n[!] ANOMALIA DETECTADA\n"
-            "    IP        : %s\n"
+            "    Par       : %s\n"
             "    PPS       : %.2f\n"
             "    Média     : %.2f\n"
             "    Desvio    : %.2f\n"
             "    Limite    : %.2f\n"
             "    Sequência : %s/%s",
-            ip, detection.pps, detection.mean, detection.std, detection.limit,
+            pair_id, detection.pps, detection.mean, detection.std, detection.limit,
             detection.consecutive_anomalies, required,
         )
 
