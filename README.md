@@ -53,7 +53,7 @@ Execute `pingall` primeiro para o controlador aprender o IP dos hosts.
 
 ## 3. Simulando tráfego e detecção
 
-A linha de base global é formada pelas primeiras 5 medições do **primeiro IP observado**. Com o intervalo padrão de 5 segundos, essa etapa leva cerca de 25 segundos. Os demais hosts não passam por calibração individual: assim que a referência global estiver pronta, suas taxas serão avaliadas imediatamente.
+A linha de base global é formada pelas primeiras 5 medições do primeiro IP monitorado, considerando apenas hosts emissores. O destinatário configurado em `SDN_DDOS_TARGET_IP` (padrão `10.0.0.2`, h2 na topologia de exemplo) é excluído da média e nunca é bloqueado. As taxas monitoradas são os pacotes enviados pelos hosts à rede (`rx` das portas do switch).
 
 Depois da calibração, somente taxas classificadas como normais atualizam o histórico global. Taxas anômalas não entram no cálculo, evitando que tráfego suspeito eleve a referência. O primeiro host deve gerar tráfego normal durante a calibração.
 
@@ -131,6 +131,7 @@ Os parâmetros são lidos de variáveis de ambiente com prefixo `SDN_DDOS_`. Os 
 | `SDN_DDOS_REQUIRED_ANOMALIES` | `2` | Janelas anômalas consecutivas antes de bloquear |
 | `SDN_DDOS_BLOCK_TIME` | `30` | Duração do bloqueio em segundos |
 | `SDN_DDOS_SUMMARY_EVERY_CYCLES` | `6` | Imprime resumo a cada N ciclos (0 desativa) |
+| `SDN_DDOS_TARGET_IP` | `10.0.0.2` | IP do destinatário/vítima, excluído da detecção e da média |
 | `SDN_DDOS_LOG_LEVEL` | `INFO` | Nível de log |
 
 Os testes devem ser realizados somente no ambiente controlado do Mininet.
