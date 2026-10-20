@@ -53,7 +53,7 @@ Execute `pingall` primeiro para o controlador aprender o IP dos hosts.
 
 ## 3. Simulando tráfego e detecção
 
-A linha de base global é formada pelas primeiras 5 medições do primeiro IP monitorado, considerando apenas hosts emissores. O destinatário configurado em `SDN_DDOS_TARGET_IP` (padrão `10.0.0.2`, h2 na topologia de exemplo) é excluído da média e nunca é bloqueado. As taxas monitoradas são os pacotes enviados pelos hosts à rede (`rx` das portas do switch).
+A linha de base global é formada pelas primeiras 5 medições do primeiro IP monitorado. As taxas usam `rx_packets` e `rx_bytes` das portas do switch, que contam pacotes entrando no switch a partir do host emissor. Assim, o tráfego é contabilizado na entrada, não novamente na porta de saída do destinatário. Nenhum destinatário precisa ser configurado: o controlador avalia o IP de origem associado à porta emissora e bloqueia esse IP quando detecta anomalia.
 
 Depois da calibração, somente taxas classificadas como normais atualizam o histórico global. Taxas anômalas não entram no cálculo, evitando que tráfego suspeito eleve a referência. O primeiro host deve gerar tráfego normal durante a calibração.
 
@@ -131,7 +131,6 @@ Os parâmetros são lidos de variáveis de ambiente com prefixo `SDN_DDOS_`. Os 
 | `SDN_DDOS_REQUIRED_ANOMALIES` | `2` | Janelas anômalas consecutivas antes de bloquear |
 | `SDN_DDOS_BLOCK_TIME` | `30` | Duração do bloqueio em segundos |
 | `SDN_DDOS_SUMMARY_EVERY_CYCLES` | `6` | Imprime resumo a cada N ciclos (0 desativa) |
-| `SDN_DDOS_TARGET_IP` | `10.0.0.2` | IP do destinatário/vítima, excluído da detecção e da média |
 | `SDN_DDOS_LOG_LEVEL` | `INFO` | Nível de log |
 
 Os testes devem ser realizados somente no ambiente controlado do Mininet.
