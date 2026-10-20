@@ -169,11 +169,13 @@ class SdnDdosController(app_manager.OSKenApp):
         for ip in self._blocklist.pop_expired():
             self._reporter.block_expired(ip)
 
-        # Mede apenas o sentido iniciador de cada fluxo.
-        for ip, rate in self._rates.collect_rates().items():
-            datapath = self._datapath_for_ip(ip)
+        # Avalia cada par separadamente; anomalia confirmada bloqueia a origem.
+        for (src, dst), rate in self._rates.collect_rates().items():
+            if self._blocklist.is_blocked(src):
+                continue
+            datapath = self._datapath_for_ip(src)
             if datapath is not None:
-                self._process_host_rate(datapath, ip, rate)
+                self._process_pair_rate(datapath, src, dst, rate)
 
         every = self._config.summary_every_cycles
         if every and cycle > 0 and cycle % every == 0:
@@ -193,25 +195,25 @@ class SdnDdosController(app_manager.OSKenApp):
                     return datapath
         return None
 
-    def _process_host_rate(self, datapath: Any, ip: str, rate: Any) -> None:
-        """Aplica detecção à taxa de pacotes iniciadores de um host."""
-        blocked = self._blocklist.is_blocked(ip)
-        self._reporter.traffic(ip, rate, blocked)
-        if blocked:
-            return
-        self._handle_detection(datapath, ip, self._detector.evaluate(ip, rate.pps))
+    def _process_pair_rate(self, datapath: Any, src: str, dst: str, rate: Any) -> None:
+        """Avalia a taxa do par, mas mantém a mitigação no IP de origem."""
+        pair_id = "{}->{}".format(src, dst)
+        self._reporter.traffic(src, dst, rate, False)
+        self._handle_detection(datapath, src, pair_id, self._detector.evaluate(pair_id, rate.pps))
 
-    def _handle_detection(self, datapath: Any, ip: str, detection: Detection) -> None:
-        """Reage ao veredito do detector (exibição, contadores e bloqueio)."""
+    def _handle_detection(
+        self, datapath: Any, src: str, pair_id: str, detection: Detection
+    ) -> None:
+        """Registra o resultado do par e bloqueia a origem se a anomalia persistir."""
         if detection.status is DetectionStatus.BASELINE:
-            self._reporter.baseline(ip, detection, self._config.baseline_samples)
+            self._reporter.baseline(pair_id, detection, self._config.baseline_samples)
         elif detection.status is DetectionStatus.NORMAL:
-            self._reporter.normal(ip, detection)
+            self._reporter.normal(pair_id, detection)
         else:
             self._stats.detections += 1
-            self._reporter.anomaly(ip, detection, self._config.required_anomalies)
+            self._reporter.anomaly(pair_id, detection, self._config.required_anomalies)
             if detection.should_block:
-                self._block(datapath, ip)
+                self._block(datapath, src)
 
     def _block(self, datapath: Any, ip: str) -> None:
         """Aplica o bloqueio no switch e o registra no controlador."""
