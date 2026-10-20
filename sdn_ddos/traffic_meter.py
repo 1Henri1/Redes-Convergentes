@@ -1,12 +1,14 @@
-"""Cálculo de taxas (PPS/BPS) a partir de contadores cumulativos de porta."""
+"""Contabilização por fluxo, excluindo o sentido de resposta."""
 
 import time
+from collections import defaultdict
 from dataclasses import dataclass
-from typing import Callable, Dict, Optional, Tuple
+from typing import Callable, Dict, Hashable, Tuple
 
+from os_ken.lib.packet import icmp, tcp, udp
 from .models import PortRate
 
-PortKey = Tuple[int, int]  # (dpid, número da porta)
+FlowKey = Tuple[Hashable, ...]
 
 
 @dataclass(frozen=True)
@@ -17,58 +19,79 @@ class _Snapshot:
 
 
 class PortRateCalculator:
-    """Converte contadores cumulativos de pacotes/bytes da direção monitorada em taxas por segundo.
+    """Calcula PPS/BPS por IP usando apenas a direção iniciadora de cada fluxo.
 
-    Os contadores do switch só crescem, então a taxa vem da diferença entre
-    duas leituras dividida pelo tempo decorrido.
+    TCP: SYN inicia a direção; SYN-ACK é associado ao sentido inverso.
+    UDP e protocolos sem sinal explícito: a primeira direção observada inicia
+    o fluxo. ICMP Echo Reply é sempre excluído e associado ao Echo Request.
+    UDP não define universalmente request/response, então a regra é heurística.
     """
 
     def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
-        """
-        Args:
-            clock: Fonte de tempo. ``monotonic`` é usado (e não ``time.time``)
-                para que ajustes do relógio do sistema (NTP) não distorçam
-                as taxas. É injetável para facilitar os testes.
-        """
         self._clock = clock
-        self._previous: Dict[PortKey, _Snapshot] = {}
+        self._initiators: set[FlowKey] = set()
+        self._packets: Dict[str, int] = defaultdict(int)
+        self._bytes: Dict[str, int] = defaultdict(int)
+        self._previous: Dict[str, _Snapshot] = {}
 
-    def update(self, key: PortKey, rx_packets: int, rx_bytes: int) -> Optional[PortRate]:
-        """Registra uma leitura e calcula a taxa desde a anterior.
+    def record_packet(self, pkt: object, ip_pkt: object) -> None:
+        """Conta bytes/pacotes somente se o pacote estiver no sentido iniciador."""
+        proto = ip_pkt.proto
+        src, dst = ip_pkt.src, ip_pkt.dst
+        tcp_pkt = pkt.get_protocol(tcp.tcp)
+        udp_pkt = pkt.get_protocol(udp.udp)
+        icmp_pkt = pkt.get_protocol(icmp.icmp)
 
-        Args:
-            key: ``(dpid, porta)`` do contador.
-            rx_packets: Total de pacotes recebidos pela porta.
-            rx_bytes: Total de bytes recebidos pela porta.
+        if tcp_pkt is not None:
+            key = (proto, src, dst, tcp_pkt.src_port, tcp_pkt.dst_port)
+            reverse = (proto, dst, src, tcp_pkt.dst_port, tcp_pkt.src_port)
+            if tcp_pkt.syn and tcp_pkt.ack:
+                self._initiators.add(reverse)
+                return
+        elif udp_pkt is not None:
+            key = (proto, src, dst, udp_pkt.src_port, udp_pkt.dst_port)
+            reverse = (proto, dst, src, udp_pkt.dst_port, udp_pkt.src_port)
+        elif icmp_pkt is not None:
+            data = getattr(icmp_pkt, "data", None)
+            ident = getattr(data, "id", None)
+            key = (proto, src, dst, icmp_pkt.type, ident)
+            reverse = (proto, dst, src, 8, ident)
+            if icmp_pkt.type == 0:  # ICMP Echo Reply
+                self._initiators.add(reverse)
+                return
+        else:
+            key = (proto, src, dst)
+            reverse = (proto, dst, src)
 
-        Returns:
-            A taxa medida, ou ``None`` quando não há como calcular: primeira
-            leitura da porta, tempo decorrido nulo ou contador que diminuiu
-            (o switch reiniciou). Nesse último caso a leitura atual vira a
-            nova referência.
-        """
+        if reverse in self._initiators:
+            return
+        self._initiators.add(key)
+        self._packets[src] += 1
+        self._bytes[src] += len(pkt)
+
+    def collect_rates(self) -> Dict[str, PortRate]:
+        """Retorna taxas por janela e atualiza os snapshots."""
         now = self._clock()
-        previous = self._previous.get(key)
-        self._previous[key] = _Snapshot(rx_packets, rx_bytes, now)
-
-        if previous is None:
-            return None
-
-        elapsed = now - previous.timestamp
-        delta_packets = rx_packets - previous.packets
-        delta_bytes = rx_bytes - previous.bytes
-
-        if elapsed <= 0 or delta_packets < 0 or delta_bytes < 0:
-            return None
-
-        return PortRate(
-            delta_packets=delta_packets,
-            delta_bytes=delta_bytes,
-            pps=delta_packets / elapsed,
-            bps=delta_bytes / elapsed,
-        )
+        rates: Dict[str, PortRate] = {}
+        for ip in list(self._packets):
+            previous = self._previous.get(ip)
+            packets, byte_count = self._packets[ip], self._bytes[ip]
+            self._previous[ip] = _Snapshot(packets, byte_count, now)
+            if previous is None:
+                continue
+            elapsed = now - previous.timestamp
+            delta_packets = packets - previous.packets
+            delta_bytes = byte_count - previous.bytes
+            if elapsed <= 0 or delta_packets < 0 or delta_bytes < 0:
+                continue
+            rates[ip] = PortRate(
+                delta_packets=delta_packets,
+                delta_bytes=delta_bytes,
+                pps=delta_packets / elapsed,
+                bps=delta_bytes / elapsed,
+            )
+        return rates
 
     def forget_switch(self, dpid: int) -> None:
-        """Descarta as leituras de um switch desconectado."""
-        for key in [k for k in self._previous if k[0] == dpid]:
-            del self._previous[key]
+        """Mantido por compatibilidade; as taxas agora são indexadas por IP."""
+        return
