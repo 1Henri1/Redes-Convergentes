@@ -55,11 +55,11 @@ class ConsoleReporter:
 
     # --- Tráfego e detecção ------------------------------------------------
 
-    def traffic(self, ip: str, port: int, rate: PortRate, blocked: bool) -> None:
+    def traffic(self, ip: str, rate: PortRate, blocked: bool) -> None:
         self._log.info(
-            "[TRÁFEGO] IP: %-15s | Porta: %-2s | PPS: %6.2f | Bytes/s: %9.2f | "
+            "[TRÁFEGO] IP: %-15s | PPS iniciadores: %6.2f | Bytes/s: %9.2f | "
             "Pkts: %-4s | %s",
-            ip, port, rate.pps, rate.bps, rate.delta_packets,
+            ip, rate.pps, rate.bps, rate.delta_packets,
             "BLOQUEADO" if blocked else "NORMAL",
         )
 
