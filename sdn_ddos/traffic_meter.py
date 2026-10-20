@@ -10,6 +10,10 @@ from .models import PortRate
 
 FlowKey = Tuple[Hashable, ...]
 
+# Evita que o estado de fluxos antigos cresça indefinidamente.
+_FLOW_TTL = 120.0
+_PRUNE_INTERVAL = 30.0
+
 
 @dataclass(frozen=True)
 class _Snapshot:
@@ -21,21 +25,37 @@ class _Snapshot:
 class PortRateCalculator:
     """Calcula PPS/BPS por IP usando apenas a direção iniciadora de cada fluxo.
 
-    TCP: SYN inicia a direção; SYN-ACK é associado ao sentido inverso.
+    TCP: SYN inicia a direção; SYN-ACK associa a resposta ao sentido inverso.
     UDP e protocolos sem sinal explícito: a primeira direção observada inicia
-    o fluxo. ICMP Echo Reply é sempre excluído e associado ao Echo Request.
-    UDP não define universalmente request/response, então a regra é heurística.
+    o fluxo. ICMP Echo Reply é excluído. UDP continua sendo uma heurística,
+    pois o protocolo não define universalmente requisições e respostas.
     """
 
     def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
         self._clock = clock
-        self._initiators: set[FlowKey] = set()
+        self._initiators: Dict[FlowKey, float] = {}
         self._packets: Dict[str, int] = defaultdict(int)
         self._bytes: Dict[str, int] = defaultdict(int)
         self._previous: Dict[str, _Snapshot] = {}
+        self._last_prune = self._clock()
+
+    def _expire_flows(self, now: float) -> None:
+        """Remove fluxos inativos periodicamente para limitar o uso de memória."""
+        if now - self._last_prune < _PRUNE_INTERVAL:
+            return
+        cutoff = now - _FLOW_TTL
+        self._initiators = {
+            key: last_seen
+            for key, last_seen in self._initiators.items()
+            if last_seen >= cutoff
+        }
+        self._last_prune = now
 
     def record_packet(self, pkt: object, ip_pkt: object) -> None:
         """Conta bytes/pacotes somente se o pacote estiver no sentido iniciador."""
+        now = self._clock()
+        self._expire_flows(now)
+
         proto = ip_pkt.proto
         src, dst = ip_pkt.src, ip_pkt.dst
         tcp_pkt = pkt.get_protocol(tcp.tcp)
@@ -46,7 +66,8 @@ class PortRateCalculator:
             key = (proto, src, dst, tcp_pkt.src_port, tcp_pkt.dst_port)
             reverse = (proto, dst, src, tcp_pkt.dst_port, tcp_pkt.src_port)
             if tcp_pkt.syn and tcp_pkt.ack:
-                self._initiators.add(reverse)
+                # Registra a direção da resposta para excluir os pacotes seguintes.
+                self._initiators[reverse] = now
                 return
         elif udp_pkt is not None:
             key = (proto, src, dst, udp_pkt.src_port, udp_pkt.dst_port)
@@ -63,8 +84,10 @@ class PortRateCalculator:
             reverse = (proto, dst, src)
 
         if reverse in self._initiators:
+            self._initiators[reverse] = now
             return
-        self._initiators.add(key)
+
+        self._initiators[key] = now
         self._packets[src] += 1
         self._bytes[src] += len(pkt.data)
 
@@ -92,5 +115,7 @@ class PortRateCalculator:
         return rates
 
     def forget_switch(self, dpid: int) -> None:
-        """Mantido por compatibilidade; as taxas agora são indexadas por IP."""
+        """Contadores indexados por IP não permitem atribuir fluxos a um switch."""
+        # O estado de fluxos inativos expira por TTL; não apaga IPs que podem
+        # continuar conectados por outro switch.
         return
