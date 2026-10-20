@@ -53,7 +53,7 @@ Execute `pingall` primeiro para o controlador aprender o IP dos hosts.
 
 ## 3. Simulando tráfego e detecção
 
-A linha de base global é formada pelas primeiras 5 medições do primeiro IP monitorado. As taxas usam `rx_packets` e `rx_bytes` das portas do switch, que contam pacotes entrando no switch a partir do host emissor. Assim, o tráfego é contabilizado na entrada, não novamente na porta de saída do destinatário. Nenhum destinatário precisa ser configurado: o controlador avalia o IP de origem associado à porta emissora e bloqueia esse IP quando detecta anomalia.
+A linha de base global é formada pelas primeiras 5 medições do primeiro IP monitorado. O controlador contabiliza cópias dos pacotes e exclui o sentido de resposta dos fluxos: ICMP Echo Reply é ignorado; TCP usa SYN/SYN-ACK para reconhecer a direção iniciadora; UDP usa a primeira direção observada, pois o protocolo não define universalmente requisições e respostas. Essa regra para UDP é heurística. Nenhum destinatário precisa ser configurado.
 
 Depois da calibração, somente taxas classificadas como normais atualizam o histórico global. Taxas anômalas não entram no cálculo, evitando que tráfego suspeito eleve a referência. O primeiro host deve gerar tráfego normal durante a calibração.
 
