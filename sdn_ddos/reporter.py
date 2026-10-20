@@ -81,12 +81,8 @@ class ConsoleReporter:
             "\n[!] ANOMALIA DETECTADA\n"
             "    Par       : %s\n"
             "    PPS       : %.2f\n"
-            "    Média     : %.2f\n"
-            "    Desvio    : %.2f\n"
-            "    Limite    : %.2f\n"
             "    Sequência : %s/%s",
-            pair_id, detection.pps, detection.mean, detection.std, detection.limit,
-            detection.consecutive_anomalies, required,
+            pair_id, detection.pps, detection.consecutive_anomalies, required,
         )
 
     def global_limits(self, mean: float, std: float, limit: float) -> None:
