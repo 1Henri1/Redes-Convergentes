@@ -36,6 +36,7 @@ class DetectorConfig:
     history_size: int = 20
     threshold_factor: float = 3.0
     min_rate_factor: float = 1.5
+    minimum_pps: float = 2.0
     required_anomalies: int = 2
     block_time: int = 30
     summary_every_cycles: int = 6
@@ -52,6 +53,7 @@ class DetectorConfig:
             ),
             (self.threshold_factor >= 0, "threshold_factor deve ser >= 0"),
             (self.min_rate_factor >= 1, "min_rate_factor deve ser >= 1"),
+            (self.minimum_pps >= 0, "minimum_pps deve ser >= 0"),
             (self.required_anomalies >= 1, "required_anomalies deve ser >= 1"),
             (
                 1 <= self.block_time <= _MAX_OPENFLOW_TIMEOUT,
