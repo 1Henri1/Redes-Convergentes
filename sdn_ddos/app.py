@@ -196,9 +196,6 @@ class SdnDdosController(app_manager.OSKenApp):
         if ip is None:
             return
 
-        # A vítima/destinatário nunca participa da média nem é candidata a bloqueio.
-        if ip == self._config.target_ip:
-            return
 
         blocked = self._blocklist.is_blocked(ip)
         self._reporter.traffic(ip, port, rate, blocked)
