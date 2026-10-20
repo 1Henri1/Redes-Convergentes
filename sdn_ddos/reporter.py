@@ -40,6 +40,7 @@ class ConsoleReporter:
             f"Amostras de baseline  : {config.baseline_samples}",
             f"Fator estatístico     : {config.threshold_factor:g}x",
             f"Fator mínimo          : {config.min_rate_factor:g}x",
+            f"Piso absoluto         : {config.minimum_pps:g} PPS",
             f"Anomalias necessárias : {config.required_anomalies}",
             f"Tempo de bloqueio     : {config.block_time}s",
         ], fill="="))
