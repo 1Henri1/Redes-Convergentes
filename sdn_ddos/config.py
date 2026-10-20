@@ -29,7 +29,6 @@ class DetectorConfig:
         required_anomalies: Janelas anômalas consecutivas antes de bloquear.
         block_time: Duração do bloqueio, em segundos.
         summary_every_cycles: Imprime o resumo a cada N ciclos (0 desativa).
-        target_ip: IP do destinatário/vítima, excluído da detecção por origem.
     """
 
     monitor_interval: float = 5.0
@@ -40,7 +39,6 @@ class DetectorConfig:
     required_anomalies: int = 2
     block_time: int = 30
     summary_every_cycles: int = 6
-    target_ip: str = "10.0.0.2"
 
     def __post_init__(self) -> None:
         """Valida os parâmetros logo na criação (fail-fast)."""
