@@ -114,6 +114,12 @@ class SdnDdosController(app_manager.OSKenApp):
         self._hosts.learn_mac(dpid, eth.src, in_port)
         self._learn_ip(dpid, pkt, in_port)
 
+        # Conta o pacote inicial; cópias de regras de encaminhamento não devem
+        # ser reenviadas pelo controlador.
+        self._record_packet(pkt)
+        if msg.reason == datapath.ofproto.OFPR_ACTION:
+            return
+
         out_port = self._hosts.port_for_mac(dpid, eth.dst)
         if out_port is None:
             # Destino desconhecido: inunda e não instala regra (evita fixar
@@ -163,46 +169,36 @@ class SdnDdosController(app_manager.OSKenApp):
         for ip in self._blocklist.pop_expired():
             self._reporter.block_expired(ip)
 
-        for datapath in list(self._datapaths.values()):
-            try:
-                self._flows.request_port_stats(datapath)
-            except Exception:  # noqa: BLE001 - um switch ruim não afeta os demais
-                _logger.exception("Falha ao solicitar estatísticas do datapath %s", datapath.id)
+        # Mede apenas o sentido iniciador de cada fluxo.
+        for ip, rate in self._rates.collect_rates().items():
+            datapath = self._datapath_for_ip(ip)
+            if datapath is not None:
+                self._process_host_rate(datapath, ip, rate)
 
         every = self._config.summary_every_cycles
         if every and cycle > 0 and cycle % every == 0:
             self._reporter.summary(self._stats, len(self._datapaths), len(self._blocklist))
 
-    @set_ev_cls(ofp_event.EventOFPPortStatsReply, MAIN_DISPATCHER)
-    def _port_stats_reply_handler(self, ev: Any) -> None:
-        """Processa os contadores de cada porta do switch."""
-        datapath = ev.msg.datapath
-        for stat in ev.msg.body:
-            # Ignora portas reservadas (ex.: LOCAL), que não são hosts.
-            if stat.port_no >= datapath.ofproto.OFPP_MAX:
-                continue
-            self._process_port(datapath, stat.port_no, stat.rx_packets, stat.rx_bytes)
+    def _record_packet(self, pkt: packet.Packet) -> None:
+        """Registra somente pacotes iniciadores, excluindo respostas."""
+        ip_pkt = pkt.get_protocol(ipv4.ipv4)
+        if ip_pkt is not None:
+            self._rates.record_packet(pkt, ip_pkt)
 
-    def _process_port(self, datapath: Any, port: int, rx_packets: int, rx_bytes: int) -> None:
-        """Mede pacotes enviados pelo host conectado à porta para a rede."""
-        dpid = datapath.id
+    def _datapath_for_ip(self, ip: str) -> Any | None:
+        """Encontra o switch ao qual o host está conectado."""
+        for dpid, datapath in self._datapaths.items():
+            for port in self._hosts.ports_for_switch(dpid):
+                if self._hosts.ip_for_port(dpid, port) == ip:
+                    return datapath
+        return None
 
-        # Usa rx: mede os pacotes que o host conectado à porta envia à rede.
-        rate = self._rates.update((dpid, port), rx_packets, rx_bytes)
-        if rate is None:
-            return
-
-        ip = self._hosts.ip_for_port(dpid, port)
-        if ip is None:
-            return
-
-
+    def _process_host_rate(self, datapath: Any, ip: str, rate: Any) -> None:
+        """Aplica detecção à taxa de pacotes iniciadores de um host."""
         blocked = self._blocklist.is_blocked(ip)
-        self._reporter.traffic(ip, port, rate, blocked)
+        self._reporter.traffic(ip, rate, blocked)
         if blocked:
-            # Já está bloqueado: não reanalisa nem contamina a linha de base.
             return
-
         self._handle_detection(datapath, ip, self._detector.evaluate(ip, rate.pps))
 
     def _handle_detection(self, datapath: Any, ip: str, detection: Detection) -> None:
