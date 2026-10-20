@@ -57,7 +57,6 @@ class PortRateCalculator:
             key = (proto, src, dst, icmp_pkt.type, ident)
             reverse = (proto, dst, src, 8, ident)
             if icmp_pkt.type == 0:  # ICMP Echo Reply
-                self._initiators.add(reverse)
                 return
         else:
             key = (proto, src, dst)
