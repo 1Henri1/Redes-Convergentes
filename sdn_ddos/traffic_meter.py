@@ -67,7 +67,7 @@ class PortRateCalculator:
             return
         self._initiators.add(key)
         self._packets[src] += 1
-        self._bytes[src] += len(pkt)
+        self._bytes[src] += len(pkt.data)
 
     def collect_rates(self) -> Dict[str, PortRate]:
         """Retorna taxas por janela e atualiza os snapshots."""
