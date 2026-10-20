@@ -177,6 +177,10 @@ class SdnDdosController(app_manager.OSKenApp):
             if datapath is not None:
                 self._process_pair_rate(datapath, src, dst, rate)
 
+        limits = self._detector.global_limits()
+        if limits is not None:
+            self._reporter.global_limits(*limits)
+
         every = self._config.summary_every_cycles
         if every and cycle > 0 and cycle % every == 0:
             self._reporter.summary(self._stats, len(self._datapaths), len(self._blocklist))
@@ -206,7 +210,8 @@ class SdnDdosController(app_manager.OSKenApp):
     ) -> None:
         """Registra o resultado do par e bloqueia a origem se a anomalia persistir."""
         if detection.status is DetectionStatus.BASELINE:
-            self._reporter.baseline(pair_id, detection, self._config.baseline_samples)
+            if pair_id == self._detector.baseline_pair:
+                self._reporter.baseline(pair_id, detection, self._config.baseline_samples)
         elif detection.status is DetectionStatus.NORMAL:
             self._reporter.normal(pair_id, detection)
         else:
