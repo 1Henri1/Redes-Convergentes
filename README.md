@@ -55,7 +55,7 @@ Execute `pingall` primeiro para o controlador aprender o IP dos hosts.
 
 A linha de base global é formada pelas primeiras 5 medições do primeiro IP monitorado. O controlador contabiliza cópias dos pacotes e exclui o sentido de resposta dos fluxos: ICMP Echo Reply é ignorado; TCP usa SYN/SYN-ACK para reconhecer a direção iniciadora; UDP usa a primeira direção observada, pois o protocolo não define universalmente requisições e respostas. Essa regra para UDP é heurística. Nenhum destinatário precisa ser configurado.
 
-Depois da calibração, somente taxas classificadas como normais atualizam o histórico global. Taxas anômalas não entram no cálculo, evitando que tráfego suspeito eleve a referência. O primeiro host deve gerar tráfego normal durante a calibração.
+Depois da calibração, somente taxas classificadas como normais atualizam o histórico global. Taxas anômalas não entram no cálculo, evitando que tráfego suspeito eleve a referência. O limite também possui um piso absoluto de 2 PPS, configurável, para reduzir falsos positivos quando a média e o desvio padrão ficam próximos de zero. O estado dos fluxos é expirado após inatividade, evitando crescimento ilimitado da memória. O primeiro host deve gerar tráfego normal durante a calibração.
 
 ### Tráfego normal
 
@@ -127,7 +127,7 @@ Os parâmetros são lidos de variáveis de ambiente com prefixo `SDN_DDOS_`. Os 
 | `SDN_DDOS_BASELINE_SAMPLES` | `5` | Amostras do primeiro IP para formar a linha de base global (mín. 2) |
 | `SDN_DDOS_HISTORY_SIZE` | `20` | Janela deslizante de amostras normais do histórico global |
 | `SDN_DDOS_THRESHOLD_FACTOR` | `3` | Limite estatístico: média + fator × desvio padrão |
-| `SDN_DDOS_MIN_RATE_FACTOR` | `1.5` | Taxa também deve superar média × fator |
+| `SDN_DDOS_MIN_RATE_FACTOR` | `1.5` | Taxa também deve superar média × fator |\n| `SDN_DDOS_MINIMUM_PPS` | `2.0` | Piso absoluto do limite para evitar alertas quando a média é próxima de zero |
 | `SDN_DDOS_REQUIRED_ANOMALIES` | `2` | Janelas anômalas consecutivas antes de bloquear |
 | `SDN_DDOS_BLOCK_TIME` | `30` | Duração do bloqueio em segundos |
 | `SDN_DDOS_SUMMARY_EVERY_CYCLES` | `6` | Imprime resumo a cada N ciclos (0 desativa) |
