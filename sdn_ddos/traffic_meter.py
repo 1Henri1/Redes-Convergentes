@@ -1,4 +1,4 @@
-"""Cálculo de taxas (PPS/BPS) a partir de contadores cumulativos."""
+"""Cálculo de taxas (PPS/BPS) a partir de contadores cumulativos de porta."""
 
 import time
 from dataclasses import dataclass
@@ -17,7 +17,7 @@ class _Snapshot:
 
 
 class PortRateCalculator:
-    """Converte contadores ``rx_packets``/``rx_bytes`` em taxas por segundo.
+    """Converte contadores cumulativos de pacotes/bytes da direção monitorada em taxas por segundo.
 
     Os contadores do switch só crescem, então a taxa vem da diferença entre
     duas leituras dividida pelo tempo decorrido.
