@@ -171,9 +171,16 @@ class SdnDdosController(app_manager.OSKenApp):
 
         # Avalia cada par separadamente; anomalia confirmada bloqueia a origem.
         for (src, dst), rate in self._rates.collect_rates().items():
-            if self._blocklist.is_blocked(src):
+            src_blocked = self._blocklist.is_blocked(src)
+            dst_blocked = self._blocklist.is_blocked(dst)
+
+            if src_blocked:
                 self._reporter.blocked_traffic(src, dst, rate)
+            if dst_blocked:
+                self._reporter.blocked_destination_traffic(src, dst, rate)
+            if src_blocked or dst_blocked:
                 continue
+
             datapath = self._datapath_for_ip(src)
             if datapath is not None:
                 self._process_pair_rate(datapath, src, dst, rate)
