@@ -79,6 +79,13 @@ class ConsoleReporter:
             src, dst, rate.pps, rate.bps,
         )
 
+    def blocked_destination_traffic(self, src: str, dst: str, rate: PortRate) -> None:
+        self._log.warning(
+            "[IP DE DESTINO BLOQUEADO] Origem: %-15s | Destino: %-15s | "
+            "PPS: %6.2f | Bytes/s: %9.2f",
+            src, dst, rate.pps, rate.bps,
+        )
+
     def baseline(self, pair_id: str, detection: Detection, required: int) -> None:
         self._log.info(
             "[BASELINE] %-34s Amostra %s/%s | PPS: %.2f",
