@@ -36,11 +36,15 @@ class AnomalyDetector:
         if self._baseline_pair is None:
             self._baseline_pair = pair_id
         if not self.baseline_ready:
-            if pair_id == self._baseline_pair:
+            if pair_id == self._baseline_pair and pps > 0:
                 self._history.append(pps)
             return Detection(DetectionStatus.BASELINE, pps, baseline_size=len(self._history))
 
         mean, std, limit = self.global_limits()
+        if pps <= 0:
+            self._streaks[pair_id] = 0
+            return Detection(DetectionStatus.NORMAL, pps, len(self._history),
+                             mean=mean, std=std, limit=limit)
         if pps > limit:
             streak = self._streaks[pair_id] + 1
             should_block = streak >= self._config.required_anomalies
