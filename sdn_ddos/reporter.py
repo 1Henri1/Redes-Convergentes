@@ -10,7 +10,7 @@ from typing import List, Optional
 from .config import DetectorConfig
 from .flow_manager import BLOCK_PRIORITY
 from .logging_setup import LOGGER_NAME
-from .models import ControllerStats, Detection, PortRate
+from .models import ControllerStats, Detection, DetectionStatus, PortRate
 
 _WIDTH = 70
 
@@ -56,12 +56,27 @@ class ConsoleReporter:
 
     # --- Tráfego e detecção ------------------------------------------------
 
-    def traffic(self, src: str, dst: str, rate: PortRate, blocked: bool) -> None:
+    def pair_result(
+        self, src: str, dst: str, rate: PortRate, detection: Detection, required: int
+    ) -> None:
+        """Registra tráfego e resultado da análise em uma única linha."""
+        if detection.status is DetectionStatus.BASELINE:
+            status = "BASELINE %s/%s" % (detection.baseline_size, required)
+        elif detection.status is DetectionStatus.ANOMALY:
+            status = "ANOMALIA %s/%s" % (detection.consecutive_anomalies, required)
+        else:
+            status = "NORMAL"
         self._log.info(
-            "[TRÁFEGO] Origem: %-15s | Destino: %-15s | PPS: %6.2f | "
-            "Bytes/s: %9.2f | Pkts: %-4s | %s",
-            src, dst, rate.pps, rate.bps, rate.delta_packets,
-            "BLOQUEADO" if blocked else "NORMAL",
+            "[TRÁFEGO/ANÁLISE] Origem: %-15s | Destino: %-15s | "
+            "PPS: %6.2f | Bytes/s: %9.2f | Pkts: %-4s | Status: %s",
+            src, dst, rate.pps, rate.bps, rate.delta_packets, status,
+        )
+
+    def blocked_traffic(self, src: str, dst: str, rate: PortRate) -> None:
+        self._log.warning(
+            "[IP DE ORIGEM BLOQUEADO] Origem: %-15s | Destino: %-15s | "
+            "PPS: %6.2f | Bytes/s: %9.2f",
+            src, dst, rate.pps, rate.bps,
         )
 
     def baseline(self, pair_id: str, detection: Detection, required: int) -> None:
@@ -78,11 +93,8 @@ class ConsoleReporter:
 
     def anomaly(self, pair_id: str, detection: Detection, required: int) -> None:
         self._log.warning(
-            "\n[!] ANOMALIA DETECTADA\n"
-            "    Par       : %s\n"
-            "    PPS       : %.2f\n"
-            "    Sequência : %s/%s",
-            pair_id, detection.pps, detection.consecutive_anomalies, required,
+            "[MITIGAÇÃO] Anomalia persistente em %s; sequência %s/%s.",
+            pair_id, detection.consecutive_anomalies, required,
         )
 
     def global_limits(self, mean: float, std: float, limit: float) -> None:
@@ -94,6 +106,7 @@ class ConsoleReporter:
     # --- Mitigação -------------------------------------------------------
 
     def block_activated(self, ip: str, duration: int) -> None:
+        self._log.warning("[IP DE ORIGEM BLOQUEADO] %s por %ss", ip, duration)
         self._log.warning(_box("[BLOQUEIO ATIVADO]", [
             f"IP                 : {ip}",
             f"Duração            : {duration}s",
