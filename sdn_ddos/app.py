@@ -172,6 +172,7 @@ class SdnDdosController(app_manager.OSKenApp):
         # Avalia cada par separadamente; anomalia confirmada bloqueia a origem.
         for (src, dst), rate in self._rates.collect_rates().items():
             if self._blocklist.is_blocked(src):
+                self._reporter.blocked_traffic(src, dst, rate)
                 continue
             datapath = self._datapath_for_ip(src)
             if datapath is not None:
@@ -202,8 +203,9 @@ class SdnDdosController(app_manager.OSKenApp):
     def _process_pair_rate(self, datapath: Any, src: str, dst: str, rate: Any) -> None:
         """Avalia a taxa do par, mas mantém a mitigação no IP de origem."""
         pair_id = "{}->{}".format(src, dst)
-        self._reporter.traffic(src, dst, rate, False)
-        self._handle_detection(datapath, src, pair_id, self._detector.evaluate(pair_id, rate.pps))
+        detection = self._detector.evaluate(pair_id, rate.pps)
+        self._reporter.pair_result(src, dst, rate, detection, self._config.required_anomalies)
+        self._handle_detection(datapath, src, pair_id, detection)
 
     def _handle_detection(
         self, datapath: Any, src: str, pair_id: str, detection: Detection
