@@ -212,15 +212,14 @@ class SdnDdosController(app_manager.OSKenApp):
     ) -> None:
         """Registra o resultado do par e bloqueia a origem se a anomalia persistir."""
         if detection.status is DetectionStatus.BASELINE:
-            if pair_id == self._detector.baseline_pair:
-                self._reporter.baseline(pair_id, detection, self._config.baseline_samples)
-        elif detection.status is DetectionStatus.NORMAL:
-            self._reporter.normal(pair_id, detection)
-        else:
-            self._stats.detections += 1
-            self._reporter.anomaly(pair_id, detection, self._config.required_anomalies)
-            if detection.should_block:
-                self._block(datapath, src)
+            return
+        if detection.status is DetectionStatus.NORMAL:
+            return
+
+        self._stats.detections += 1
+        self._reporter.anomaly(pair_id, detection, self._config.required_anomalies)
+        if detection.should_block:
+            self._block(datapath, src)
 
     def _block(self, datapath: Any, ip: str) -> None:
         """Aplica o bloqueio no switch e o registra no controlador."""
