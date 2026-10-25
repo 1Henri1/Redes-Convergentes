@@ -87,48 +87,6 @@ mininet> h4 ping -i 0.1 h2 > /dev/null &
 
 Esse teste aumenta a taxa de pacotes direcionados ao mesmo destino e permite observar PPS, bytes/s e a reação do bloqueio.
 
-### Preparar o servidor de teste
-
-Inicie um servidor TCP em h2. Para testar UDP, troque `--protocol tcp` por `--protocol udp`.
-
-```text
-mininet> h2 python3 tools/generate_traffic.py --server --protocol tcp --port 9000 &
-```
-
-### Testar PPS e bytes/s com TCP
-
-Em h1, abra 20 conexões TCP, envie blocos de 1200 bytes por 10 segundos e espere 10 ms entre envios de cada conexão:
-
-```text
-mininet> h1 python3 tools/generate_traffic.py --dst 10.0.0.2 --protocol tcp --port 9000 --flows 20 --duration 10 --payload-size 1200 --interval 0.01
-```
-
-- Para aumentar a intensidade, diminua `--interval` ou aumente `--payload-size`.
-- `--flows` controla quantas conexões TCP independentes o gerador tenta abrir; essa quantidade não é usada como métrica pelo detector.
-- **Carga leve:** use, por exemplo, `--flows 2 --duration 10 --payload-size 256 --interval 0.1`.
-
-Para testar várias origens simultaneamente, inicie clientes semelhantes em h1, h3 e h4, todos apontando para `10.0.0.2`. Evite iniciar uma carga alta antes da baseline ser formada.
-
-### Testar com UDP
-
-Inicie um servidor UDP em h2:
-
-```text
-mininet> h2 python3 tools/generate_traffic.py --server --protocol udp --port 9000 &
-```
-
-Em h1, gere tráfego com 20 sockets UDP, cada um enviando blocos de 1200 bytes por 10 segundos:
-
-```text
-mininet> h1 python3 tools/generate_traffic.py --dst 10.0.0.2 --protocol udp --port 9000 --flows 20 --duration 10 --payload-size 1200 --interval 0.01
-```
-
-UDP não estabelece uma conexão de transporte. O controlador contabiliza os pacotes e bytes por par de IPs; a quantidade de sockets não é usada como métrica de detecção.
-
-Observe no controlador as linhas `[TRÁFEGO/ANÁLISE]`, `[LIMITES GLOBAIS]` e `[MITIGAÇÃO]`. Os resultados dependem da baseline, do intervalo de monitoramento e da taxa realmente observada.
-
-Para parar processos em segundo plano, use `jobs`/`kill` nos hosts ou saia do Mininet.
-
 Com `xterm`:
 
 ```text
