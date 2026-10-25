@@ -73,8 +73,8 @@ class PortRateCalculator:
             elapsed = now - previous.timestamp
             dp, db = packets - previous.packets, byte_count - previous.bytes
             if elapsed <= 0 or dp < 0 or db < 0: continue
-            # BPS significa bits por segundo; os contadores armazenam bytes.
-            rates[pair] = PortRate(dp, db, dp / elapsed, (db * 8) / elapsed)
+            # A taxa de volume é expressa em bytes por segundo (B/s).
+            rates[pair] = PortRate(dp, db, dp / elapsed, db / elapsed)
         return rates
     def forget_switch(self, dpid: int) -> None:
         """A medição por par IP não é específica de um switch."""
