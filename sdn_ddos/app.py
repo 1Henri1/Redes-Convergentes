@@ -191,7 +191,7 @@ class SdnDdosController(app_manager.OSKenApp):
             self._reporter.global_limits("PPS", *pps_limits)
         bps_limits = self._bps_detector.global_limits(minimum_rate=0.0)
         if bps_limits is not None:
-            self._reporter.global_limits("bits/s", *bps_limits)
+            self._reporter.global_limits("bytes/s", *bps_limits)
 
         every = self._config.summary_every_cycles
         if every and cycle > 0 and cycle % every == 0:
@@ -219,7 +219,7 @@ class SdnDdosController(app_manager.OSKenApp):
         self._reporter.pair_result(
             src, dst, rate, pps_detection, bps_detection, self._config.required_anomalies
         )
-        self._handle_detection(datapath, src, pair_id, pps_detection, "PPS", bps_detection, "bits/s")
+        self._handle_detection(datapath, src, pair_id, pps_detection, "PPS", bps_detection, "bytes/s")
 
     def _handle_detection(
         self, datapath: Any, src: str, pair_id: str,
