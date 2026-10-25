@@ -51,11 +51,18 @@ Execute `pingall` primeiro para o controlador aprender o IP dos hosts.
 
 ---
 
-## 3. Simulando tráfego e detecção
+## 3. Métricas e testes de detecção
 
-A linha de base é formada pelas primeiras 5 medições do primeiro par origem-destino observado. Cada par IP origem-destino é medido e avaliado separadamente. O controlador contabiliza cópias dos pacotes e exclui o sentido de resposta dos fluxos: ICMP Echo Reply é ignorado; TCP usa SYN/SYN-ACK para reconhecer a direção iniciadora; UDP usa a primeira direção observada, pois o protocolo não define universalmente requisições e respostas. Essa regra para UDP é heurística. Nenhum destinatário precisa ser configurado.
+O controlador calcula três métricas:
+- **PPS:** pacotes por segundo para cada par origem-destino.
+- **bytes/s:** volume de dados por segundo para cada par origem-destino.
+- **Fluxos novos/s:** novos fluxos iniciados por segundo, agregados por destino. TCP é contado pelo SYN inicial; UDP, pela tupla de protocolo/IPs/portas; ICMP Echo Request repetido com o mesmo identificador é tratado como o mesmo fluxo durante o período de expiração.
 
-Depois da calibração, somente taxas classificadas como normais atualizam o histórico estatístico. Taxas anômalas não entram no cálculo, evitando que tráfego suspeito eleve a referência. O limite também possui um piso absoluto de 2 PPS, configurável, para reduzir falsos positivos quando a média e o desvio padrão ficam próximos de zero. O estado dos fluxos é expirado após inatividade, evitando crescimento ilimitado da memória. O primeiro host deve gerar tráfego normal durante a calibração.
+Cada detector usa uma baseline estatística e um limite baseado em média + fator × desvio padrão, com um limite mínimo adicional. A baseline precisa ser formada antes que o detector classifique anomalias. Para PPS e bytes/s, a baseline é construída com taxas positivas do primeiro par observado. Para fluxos novos/s, janelas sem novos fluxos também entram na baseline, pois representam comportamento normal. Taxas anômalas não atualizam o histórico. O detector de fluxos novos usa uma janela anômala para acionar mitigação: se muitos fluxos novos forem direcionados ao mesmo destino, bloqueia as origens que contribuíram para a rajada. Os bloqueios são temporários.
+
+**Importante:** `ping` é adequado para testar PPS e bytes/s, mas não é um bom teste de criação de muitos fluxos, pois pings repetidos normalmente reutilizam o mesmo identificador ICMP. Para testar fluxos novos, use conexões TCP distintas, por exemplo com `iperf3` e múltiplos fluxos paralelos.
+
+Execute `pingall` antes dos testes para o controlador aprender os hosts. Durante a calibração, gere tráfego normal e aguarde aparecerem os limites globais no log.
 
 ### Tráfego normal
 
@@ -71,7 +78,7 @@ mininet> h3 ping -i 0.1 h2
 
 Para interromper: `Ctrl+C`.
 
-### Vários hosts ao mesmo tempo
+### Vários hosts ao mesmo tempo: testar PPS e bytes/s
 
 ```text
 mininet> h1 ping -i 0.1 h2 > /dev/null &
@@ -79,7 +86,38 @@ mininet> h3 ping -i 0.1 h2 > /dev/null &
 mininet> h4 ping -i 0.1 h2 > /dev/null &
 ```
 
-Para parar os processos, encerre os comandos de ping ou saia do Mininet.
+Esse teste aumenta a taxa de pacotes direcionados ao mesmo destino e permite observar PPS, bytes/s e a reação do bloqueio. Não garante, por si só, que haverá muitos fluxos novos.
+
+### Testar novos fluxos TCP por segundo
+
+Instale o `iperf3` no sistema Debian/Ubuntu usado pela VM, se necessário:
+
+```bash
+sudo apt install iperf3
+```
+
+No prompt do Mininet, inicie o servidor no destino:
+
+```text
+mininet> h2 iperf3 -s &
+```
+
+Gere múltiplas conexões TCP simultâneas a partir de um host:
+
+```text
+mininet> h1 iperf3 -c 10.0.0.2 -P 20 -t 10
+```
+
+Para simular uma rajada distribuída, execute comandos semelhantes a partir de outros hosts, direcionando-os para `10.0.0.2`:
+
+```text
+mininet> h3 iperf3 -c 10.0.0.2 -P 20 -t 10
+mininet> h4 iperf3 -c 10.0.0.2 -P 20 -t 10
+```
+
+Observe no controlador as linhas `[FLUXOS NOVOS/ANÁLISE]`, `[LIMITES GLOBAIS] fluxos novos/s` e `[MITIGAÇÃO]`. Se a taxa ultrapassar o limite estatístico, as origens que contribuíram para a rajada devem ser bloqueadas. O resultado depende da baseline, do intervalo de monitoramento e da taxa efetivamente observada.
+
+Para parar processos em segundo plano, use `jobs`/`kill` nos hosts ou saia do Mininet.
 
 Com `xterm`:
 
