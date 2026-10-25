@@ -43,11 +43,12 @@ def serve_udp(host, port, stop):
                 continue
 
 
-def tcp_worker(dst, port, payload, duration, interval, start_event, errors):
+def tcp_worker(dst, port, payload, duration, interval, start_event, errors, connected):
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-            sock.settimeout(5)
+            sock.settimeout(15)
             sock.connect((dst, port))
+            connected.append(1)
             start_event.wait()
             deadline = time.monotonic() + duration
             while time.monotonic() < deadline:
@@ -107,11 +108,14 @@ def main():
     payload = b"x" * args.payload_size
     start_event = threading.Event()
     errors = []
+    connected = []
     worker = tcp_worker if args.protocol == "tcp" else udp_worker
     threads = [
         threading.Thread(
             target=worker,
-            args=(args.dst, args.port, payload, args.duration, args.interval, start_event, errors),
+            args=(args.dst, args.port, payload, args.duration, args.interval, start_event, errors, connected)
+            if args.protocol == "tcp"
+            else (args.dst, args.port, payload, args.duration, args.interval, start_event, errors),
             daemon=True,
         )
         for _ in range(args.flows)
@@ -127,7 +131,8 @@ def main():
     elapsed = time.monotonic() - started
     print(
         f"[CLIENT] protocol={args.protocol} destination={args.dst}:{args.port} "
-        f"flows={args.flows} payload={args.payload_size}B duration={elapsed:.2f}s",
+        f"flows={args.flows} established={len(connected) if args.protocol == \"tcp\" else args.flows} "
+        f"payload={args.payload_size}B duration={elapsed:.2f}s",
         flush=True,
     )
     if errors:
