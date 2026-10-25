@@ -52,8 +52,12 @@ class SdnDdosController(app_manager.OSKenApp):
         self._rates = PortRateCalculator()
         self._detector = AnomalyDetector(self._config)
         self._bps_detector = AnomalyDetector(self._config)
-        # Rajadas de novos fluxos são mitigadas na primeira janela anômala.
-        self._flow_config = replace(self._config, required_anomalies=1)
+        # Exige a mesma persistência das demais métricas para evitar que um
+        # teste pontual de abertura de conexões bloqueie imediatamente o host.
+        self._flow_config = replace(
+            self._config,
+            required_anomalies=max(2, self._config.required_anomalies),
+        )
         self._flow_detector = AnomalyDetector(self._flow_config)
         self._flow_attack_sources: Dict[str, set[str]] = {}
         self._blocklist = BlockList(self._config.block_time)
