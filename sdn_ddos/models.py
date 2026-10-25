@@ -24,6 +24,15 @@ class PortRate:
 
 
 @dataclass(frozen=True)
+class DestinationFlowRate:
+    """Taxa de novos fluxos por destino em uma janela de monitoramento."""
+
+    new_flows: int
+    flows_per_second: float
+    sources: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class Detection:
     """Veredito do detector para uma amostra de taxa (PPS ou bits/s).
 
