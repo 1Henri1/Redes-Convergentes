@@ -57,32 +57,35 @@ class ConsoleReporter:
     # --- Tráfego e detecção ------------------------------------------------
 
     def pair_result(
-        self, src: str, dst: str, rate: PortRate, detection: Detection, required: int
+        self, src: str, dst: str, rate: PortRate,
+        pps_detection: Detection, bps_detection: Detection, required: int
     ) -> None:
-        """Registra tráfego e resultado da análise em uma única linha."""
-        if detection.status is DetectionStatus.BASELINE:
-            status = "BASELINE %s/%s" % (detection.baseline_size, required)
-        elif detection.status is DetectionStatus.ANOMALY:
-            status = "ANOMALIA %s/%s" % (detection.consecutive_anomalies, required)
-        else:
-            status = "NORMAL"
+        """Registra tráfego e os resultados de PPS e bits/s em uma única linha."""
+        def status(detection: Detection) -> str:
+            if detection.status is DetectionStatus.BASELINE:
+                return "BASELINE %s/%s" % (detection.baseline_size, required)
+            if detection.status is DetectionStatus.ANOMALY:
+                return "ANOMALIA %s/%s" % (detection.consecutive_anomalies, required)
+            return "NORMAL"
+
         self._log.info(
             "[TRÁFEGO/ANÁLISE] Origem: %-15s | Destino: %-15s | "
-            "PPS: %6.2f | Bytes/s: %9.2f | Pkts: %-4s | Status: %s",
-            src, dst, rate.pps, rate.bps, rate.delta_packets, status,
+            "PPS: %6.2f (%s) | bits/s: %10.2f (%s) | Pkts: %-4s",
+            src, dst, rate.pps, status(pps_detection), rate.bps,
+            status(bps_detection), rate.delta_packets,
         )
 
     def blocked_traffic(self, src: str, dst: str, rate: PortRate) -> None:
         self._log.warning(
             "[IP DE ORIGEM BLOQUEADO] Origem: %-15s | Destino: %-15s | "
-            "PPS: %6.2f | Bytes/s: %9.2f",
+            "PPS: %6.2f | bits/s: %10.2f",
             src, dst, rate.pps, rate.bps,
         )
 
     def blocked_destination_traffic(self, src: str, dst: str, rate: PortRate) -> None:
         self._log.warning(
             "[IP DE DESTINO BLOQUEADO] Origem: %-15s | Destino: %-15s | "
-            "PPS: %6.2f | Bytes/s: %9.2f",
+            "PPS: %6.2f | bits/s: %10.2f",
             src, dst, rate.pps, rate.bps,
         )
 
@@ -98,16 +101,18 @@ class ConsoleReporter:
             pair_id, detection.pps,
         )
 
-    def anomaly(self, pair_id: str, detection: Detection, required: int) -> None:
+    def anomaly(
+        self, pair_id: str, detection: Detection, required: int, metric: str = "PPS"
+    ) -> None:
         self._log.warning(
-            "[MITIGAÇÃO] Anomalia persistente em %s; sequência %s/%s.",
-            pair_id, detection.consecutive_anomalies, required,
+            "[MITIGAÇÃO] Anomalia de %s em %s; sequência %s/%s.",
+            metric, pair_id, detection.consecutive_anomalies, required,
         )
 
-    def global_limits(self, mean: float, std: float, limit: float) -> None:
+    def global_limits(self, metric: str, mean: float, std: float, limit: float) -> None:
         self._log.info(
-            "[LIMITES GLOBAIS] Média: %.2f PPS | Desvio: %.2f | Limite: %.2f PPS",
-            mean, std, limit,
+            "[LIMITES GLOBAIS] %s | Média: %.2f | Desvio: %.2f | Limite: %.2f",
+            metric, mean, std, limit,
         )
 
     # --- Mitigação -------------------------------------------------------
