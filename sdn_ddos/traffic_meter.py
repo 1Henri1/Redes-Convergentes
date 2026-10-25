@@ -1,12 +1,12 @@
-"""Contabilização de tráfego por par e de novos fluxos por destino."""
+"""Contabilização de tráfego por par origem-destino."""
 import time
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Callable, Dict, Hashable, Set, Tuple
+from typing import Callable, Dict, Hashable, Tuple
 
 from os_ken.lib.packet import icmp, tcp, udp
 
-from .models import DestinationFlowRate, PortRate
+from .models import PortRate
 
 FlowKey = Tuple[Hashable, ...]
 PairKey = Tuple[str, str]
@@ -22,11 +22,10 @@ class _Snapshot:
 
 
 class PortRateCalculator:
-    """Calcula taxas por par e contabiliza cada novo fluxo uma única vez.
+    """Calcula PPS e bits/s por par, excluindo respostas identificáveis.
 
-    TCP usa a tupla de 5 elementos e exclui SYN-ACK/respostas; UDP usa
-    protocolo, IPs e portas; ICMP usa tipo e identificador. Fluxos inativos
-    expiram após _FLOW_TTL. A taxa de volume é expressa em bytes/s.
+    A tupla de fluxo é mantida apenas para reconhecer tráfego de retorno;
+    a detecção utiliza exclusivamente PPS e bits/s. Fluxos inativos expiram.
     """
 
     def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
@@ -37,12 +36,6 @@ class PortRateCalculator:
         self._previous: Dict[PairKey, _Snapshot] = {}
         self._last_prune = self._clock()
 
-        # Contadores por janela para medir a taxa agregada de criação de fluxos
-        # direcionados a cada destino, independentemente da origem.
-        self._new_flow_counts: Dict[str, int] = defaultdict(int)
-        self._new_flow_sources: Dict[str, Set[str]] = defaultdict(set)
-        self._known_flow_destinations: Set[str] = set()
-        self._last_flow_collection = self._clock()
 
     def _expire_flows(self, now: float) -> None:
         if now - self._last_prune < _PRUNE_INTERVAL:
@@ -87,16 +80,11 @@ class PortRateCalculator:
             self._initiators[reverse] = now
             return
 
-        is_new_flow = key not in self._initiators
         self._initiators[key] = now
         pair = (src, dst)
         self._packets[pair] += 1
         self._bytes[pair] += len(pkt.data)
 
-        if is_new_flow:
-            self._new_flow_counts[dst] += 1
-            self._new_flow_sources[dst].add(src)
-            self._known_flow_destinations.add(dst)
 
     def collect_rates(self) -> Dict[PairKey, PortRate]:
         now = self._clock()
@@ -111,29 +99,8 @@ class PortRateCalculator:
             dp, db = packets - previous.packets, byte_count - previous.bytes
             if elapsed <= 0 or dp < 0 or db < 0:
                 continue
-            rates[pair] = PortRate(dp, db, dp / elapsed, db / elapsed)
+            rates[pair] = PortRate(dp, db, dp / elapsed, (db * 8) / elapsed)
         return rates
-
-    def collect_new_flow_rates(self) -> Dict[str, DestinationFlowRate]:
-        """Retorna novos fluxos/s por destino e as origens vistas nesta janela."""
-        now = self._clock()
-        elapsed = now - self._last_flow_collection
-        self._last_flow_collection = now
-        if elapsed <= 0:
-            return {}
-
-        results: Dict[str, DestinationFlowRate] = {}
-        for dst in self._known_flow_destinations:
-            count = self._new_flow_counts.get(dst, 0)
-            sources = tuple(sorted(self._new_flow_sources.get(dst, set())))
-            results[dst] = DestinationFlowRate(
-                new_flows=count,
-                flows_per_second=count / elapsed,
-                sources=sources,
-            )
-            self._new_flow_counts[dst] = 0
-            self._new_flow_sources[dst].clear()
-        return results
 
     def forget_switch(self, dpid: int) -> None:
         """A medição por IP não é específica de um switch."""
