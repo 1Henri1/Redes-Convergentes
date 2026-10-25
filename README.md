@@ -53,14 +53,13 @@ Execute `pingall` primeiro para o controlador aprender o IP dos hosts.
 
 ## 3. Métricas e testes de detecção
 
-O controlador calcula três métricas:
-- **PPS:** pacotes por segundo para cada par origem-destino.
-- **bytes/s:** volume de dados por segundo para cada par origem-destino.
-- **Fluxos novos/s:** novos fluxos iniciados por segundo, agregados por destino. TCP é contado pelo SYN inicial; UDP, pela tupla de protocolo/IPs/portas; ICMP Echo Request repetido com o mesmo identificador é tratado como o mesmo fluxo durante o período de expiração.
+ O controlador utiliza duas métricas por par IP origem-destino:
+- **PPS:** pacotes por segundo.
+- **bytes/s:** volume de dados transmitidos por segundo, calculado a partir dos bytes observados.
 
-Cada detector usa uma baseline estatística e um limite baseado em média + fator × desvio padrão, com um limite mínimo adicional. A baseline precisa ser formada antes que o detector classifique anomalias. Para PPS e bytes/s, a baseline é construída com taxas positivas do primeiro par observado. Para fluxos novos/s, janelas sem novos fluxos também entram na baseline, pois representam comportamento normal. Taxas anômalas não atualizam o histórico. O detector de fluxos novos usa uma janela anômala para acionar mitigação: se muitos fluxos novos forem direcionados ao mesmo destino, bloqueia as origens que contribuíram para a rajada. Os bloqueios são temporários.
+Cada métrica tem seu próprio detector estatístico, com baseline global inicializada pelas amostras positivas do primeiro par observado. O limite considera média + fator × desvio padrão, média × fator mínimo e, para PPS, um piso absoluto. A baseline deve ser formada antes da classificação. Taxas anômalas não são adicionadas ao histórico; taxas normais podem atualizar a baseline. Uma origem só é bloqueada quando PPS ou bytes/s apresenta anomalias persistentes pelo número de janelas configurado. O bloqueio é temporário.
 
-**Gerador configurável:** o script `tools/generate_traffic.py` permite testar as três métricas com TCP ou UDP sem instalar `iperf3`. Cada socket cliente representa um fluxo distinto; tamanho e intervalo dos envios controlam o volume e a intensidade aproximada. O número de pacotes real pode variar devido ao TCP/IP e ao comportamento do sistema, então use os contadores do controlador/switch para medi-lo.
+**Gerador de tráfego:** `tools/generate_traffic.py` gera tráfego TCP ou UDP para testar o monitoramento de PPS e bytes/s. Embora possa abrir várias conexões ou sockets, o controlador não usa a quantidade de fluxos como métrica de detecção. O tamanho e o intervalo dos envios influenciam o volume observado; os resultados reais dependem do comportamento do sistema e devem ser conferidos nos logs do controlador.
 
 Execute `pingall` antes dos testes para o controlador aprender os hosts. Durante a calibração, gere tráfego normal e aguarde aparecerem os limites globais no log. Os comandos abaixo assumem a topologia `single,4` (h1–h4) e que o repositório está acessível no sistema de arquivos da VM.
 
@@ -86,7 +85,7 @@ mininet> h3 ping -i 0.1 h2 > /dev/null &
 mininet> h4 ping -i 0.1 h2 > /dev/null &
 ```
 
-Esse teste aumenta a taxa de pacotes direcionados ao mesmo destino e permite observar PPS, bytes/s e a reação do bloqueio. Não garante, por si só, que haverá muitos fluxos novos.
+Esse teste aumenta a taxa de pacotes direcionados ao mesmo destino e permite observar PPS, bytes/s e a reação do bloqueio.
 
 ### Preparar o servidor de teste
 
@@ -96,7 +95,7 @@ Inicie um servidor TCP em h2. Para testar UDP, troque `--protocol tcp` por `--pr
 mininet> h2 python3 tools/generate_traffic.py --server --protocol tcp --port 9000 &
 ```
 
-### Testar fluxos, pacotes e bytes com TCP
+### Testar PPS e bytes/s com TCP
 
 Em h1, abra 20 conexões TCP, envie blocos de 1200 bytes por 10 segundos e espere 10 ms entre envios de cada conexão:
 
@@ -104,8 +103,8 @@ Em h1, abra 20 conexões TCP, envie blocos de 1200 bytes por 10 segundos e esper
 mininet> h1 python3 tools/generate_traffic.py --dst 10.0.0.2 --protocol tcp --port 9000 --flows 20 --duration 10 --payload-size 1200 --interval 0.01
 ```
 
-- **Fluxos novos/s:** aumente `--flows`. Cada conexão TCP cliente abre um fluxo novo.
-- **Pacotes/s e bytes/s:** diminua `--interval` para aumentar a frequência ou aumente `--payload-size` para enviar mais dados por envio.
+- Para aumentar a intensidade, diminua `--interval` ou aumente `--payload-size`.
+- `--flows` controla quantas conexões TCP independentes o gerador tenta abrir; essa quantidade não é usada como métrica pelo detector.
 - **Carga leve:** use, por exemplo, `--flows 2 --duration 10 --payload-size 256 --interval 0.1`.
 
 Para testar várias origens simultaneamente, inicie clientes semelhantes em h1, h3 e h4, todos apontando para `10.0.0.2`. Evite iniciar uma carga alta antes da baseline ser formada.
@@ -124,9 +123,9 @@ Em h1, gere tráfego com 20 sockets UDP, cada um enviando blocos de 1200 bytes p
 mininet> h1 python3 tools/generate_traffic.py --dst 10.0.0.2 --protocol udp --port 9000 --flows 20 --duration 10 --payload-size 1200 --interval 0.01
 ```
 
-UDP não estabelece uma conexão de transporte, mas o controlador diferencia os fluxos pela tupla de protocolo, IPs e portas. Cada socket cliente usa uma porta de origem própria.
+UDP não estabelece uma conexão de transporte. O controlador contabiliza os pacotes e bytes por par de IPs; a quantidade de sockets não é usada como métrica de detecção.
 
-Observe no controlador as linhas `[TRÁFEGO/ANÁLISE]`, `[FLUXOS NOVOS/ANÁLISE]`, `[LIMITES GLOBAIS]` e `[MITIGAÇÃO]`. Os resultados dependem da baseline, do intervalo de monitoramento e da taxa realmente observada.
+Observe no controlador as linhas `[TRÁFEGO/ANÁLISE]`, `[LIMITES GLOBAIS]` e `[MITIGAÇÃO]`. Os resultados dependem da baseline, do intervalo de monitoramento e da taxa realmente observada.
 
 Para parar processos em segundo plano, use `jobs`/`kill` nos hosts ou saia do Mininet.
 
