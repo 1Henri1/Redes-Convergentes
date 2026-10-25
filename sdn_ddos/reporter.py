@@ -70,7 +70,7 @@ class ConsoleReporter:
 
         self._log.info(
             "[TRÁFEGO/ANÁLISE] Origem: %-15s | Destino: %-15s | "
-            "PPS: %6.2f (%s) | bits/s: %10.2f (%s) | Pkts: %-4s",
+            "PPS: %6.2f (%s) | bytes/s: %10.2f (%s) | Pkts: %-4s",
             src, dst, rate.pps, status(pps_detection), rate.bps,
             status(bps_detection), rate.delta_packets,
         )
