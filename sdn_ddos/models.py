@@ -15,21 +15,12 @@ class DetectionStatus(Enum):
 
 @dataclass(frozen=True)
 class PortRate:
-    """Taxa de recepção de uma porta entre duas coletas consecutivas."""
+    """Taxa de tráfego entre duas coletas consecutivas."""
 
     delta_packets: int
     delta_bytes: int
     pps: float
-    bps: float
-
-
-@dataclass(frozen=True)
-class DestinationFlowRate:
-    """Taxa de novos fluxos por destino em uma janela de monitoramento."""
-
-    new_flows: int
-    flows_per_second: float
-    sources: tuple[str, ...]
+    bps: float  # bits por segundo
 
 
 @dataclass(frozen=True)
