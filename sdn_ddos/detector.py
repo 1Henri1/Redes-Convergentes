@@ -36,10 +36,12 @@ class AnomalyDetector:
         self, pair_id: str, rate: float, minimum_rate: Optional[float] = None
     ) -> Detection:
         """Avalia uma métrica; somente o primeiro par forma a baseline inicial global."""
-        if self._baseline_pair is None:
+        # Não fixe a baseline em um par cuja primeira taxa seja zero:
+        # isso pode impedir que a métrica forme sua baseline (especialmente bytes/s).
+        if self._baseline_pair is None and rate > 0:
             self._baseline_pair = pair_id
         if not self.baseline_ready:
-            if pair_id == self._baseline_pair and rate > 0:
+            if self._baseline_pair is not None and pair_id == self._baseline_pair and rate > 0:
                 self._history.append(rate)
             return Detection(DetectionStatus.BASELINE, rate, baseline_size=len(self._history))
 
