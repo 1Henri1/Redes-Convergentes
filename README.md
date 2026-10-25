@@ -79,14 +79,6 @@ Para interromper: `Ctrl+C`.
 
 ### Vários hosts ao mesmo tempo: testar PPS e bytes/s
 
-```text
-mininet> h1 ping -i 0.1 h2 > /dev/null &
-mininet> h3 ping -i 0.1 h2 > /dev/null &
-mininet> h4 ping -i 0.1 h2 > /dev/null &
-```
-
-Esse teste aumenta a taxa de pacotes direcionados ao mesmo destino e permite observar PPS, bytes/s e a reação do bloqueio.
-
 Com `xterm`:
 
 ```text
