@@ -21,36 +21,39 @@ class AnomalyDetector:
     def baseline_ready(self) -> bool:
         return len(self._history) >= self._config.baseline_samples
 
-    def global_limits(self) -> Optional[Tuple[float, float, float]]:
+    def global_limits(self, minimum_rate: Optional[float] = None) -> Optional[Tuple[float, float, float]]:
         """Retorna média, desvio e limite globais, se a baseline estiver pronta."""
         if not self.baseline_ready:
             return None
         mean = statistics.fmean(self._history)
         std = statistics.stdev(self._history)
+        floor = self._config.minimum_pps if minimum_rate is None else minimum_rate
         limit = max(mean + self._config.threshold_factor * std,
-                    mean * self._config.min_rate_factor, self._config.minimum_pps)
+                    mean * self._config.min_rate_factor, floor)
         return mean, std, limit
 
-    def evaluate(self, pair_id: str, pps: float) -> Detection:
-        """Só o primeiro par observado forma a baseline inicial global."""
+    def evaluate(
+        self, pair_id: str, rate: float, minimum_rate: Optional[float] = None
+    ) -> Detection:
+        """Avalia uma métrica; somente o primeiro par forma a baseline inicial global."""
         if self._baseline_pair is None:
             self._baseline_pair = pair_id
         if not self.baseline_ready:
-            if pair_id == self._baseline_pair and pps > 0:
-                self._history.append(pps)
-            return Detection(DetectionStatus.BASELINE, pps, baseline_size=len(self._history))
+            if pair_id == self._baseline_pair and rate > 0:
+                self._history.append(rate)
+            return Detection(DetectionStatus.BASELINE, rate, baseline_size=len(self._history))
 
-        mean, std, limit = self.global_limits()
-        if pps <= 0:
+        mean, std, limit = self.global_limits(minimum_rate)
+        if rate <= 0:
             self._streaks[pair_id] = 0
-            return Detection(DetectionStatus.NORMAL, pps, len(self._history),
+            return Detection(DetectionStatus.NORMAL, rate, len(self._history),
                              mean=mean, std=std, limit=limit)
-        if pps > limit:
+        if rate > limit:
             streak = self._streaks[pair_id] + 1
             should_block = streak >= self._config.required_anomalies
             self._streaks[pair_id] = 0 if should_block else streak
-            return Detection(DetectionStatus.ANOMALY, pps, len(self._history), mean=mean, std=std,
+            return Detection(DetectionStatus.ANOMALY, rate, len(self._history), mean=mean, std=std,
                              limit=limit, consecutive_anomalies=streak, should_block=should_block)
         self._streaks[pair_id] = 0
-        self._history.append(pps)
-        return Detection(DetectionStatus.NORMAL, pps, len(self._history), mean=mean, std=std, limit=limit)
+        self._history.append(rate)
+        return Detection(DetectionStatus.NORMAL, rate, len(self._history), mean=mean, std=std, limit=limit)
