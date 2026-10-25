@@ -10,7 +10,6 @@ informado a ``run_apps`` (``sdn_ddos.app``); por isso ela não é reexportada.
 """
 
 import logging
-from dataclasses import replace
 from typing import Any, Dict
 
 from os_ken.base import app_manager
@@ -52,14 +51,6 @@ class SdnDdosController(app_manager.OSKenApp):
         self._rates = PortRateCalculator()
         self._detector = AnomalyDetector(self._config)
         self._bps_detector = AnomalyDetector(self._config)
-        # Exige a mesma persistência das demais métricas para evitar que um
-        # teste pontual de abertura de conexões bloqueie imediatamente o host.
-        self._flow_config = replace(
-            self._config,
-            required_anomalies=max(2, self._config.required_anomalies),
-        )
-        self._flow_detector = AnomalyDetector(self._flow_config)
-        self._flow_attack_sources: Dict[str, set[str]] = {}
         self._blocklist = BlockList(self._config.block_time)
         self._flows = FlowManager()
         self._reporter = ConsoleReporter()
@@ -195,48 +186,12 @@ class SdnDdosController(app_manager.OSKenApp):
             if datapath is not None:
                 self._process_pair_rate(datapath, src, dst, rate)
 
-        # Mede a criação agregada de fluxos para cada destino. Se o limite
-        # for excedido em janelas consecutivas, bloqueia todas as origens
-        # que contribuíram para o pico, não apenas uma origem isolada.
-        for dst, flow_rate in self._rates.collect_new_flow_rates().items():
-            detection = self._flow_detector.evaluate(
-                dst, flow_rate.flows_per_second, minimum_rate=1.0,
-                include_zero_rates=True,
-            )
-            self._reporter.destination_flow_result(
-                dst, flow_rate.new_flows, flow_rate.flows_per_second,
-                len(flow_rate.sources), detection, self._flow_config.required_anomalies,
-            )
-            if detection.status is DetectionStatus.ANOMALY:
-                pending = self._flow_attack_sources.setdefault(dst, set())
-                pending.update(flow_rate.sources)
-                self._stats.detections += 1
-                self._reporter.anomaly(
-                    "destino {}".format(dst), detection,
-                    self._flow_config.required_anomalies, "fluxos novos/s",
-                )
-                # Uma rajada agregada por destino pode ser distribuída:
-                # bloqueia todas as origens que contribuíram nesta janela.
-                if detection.should_block:
-                    for src in sorted(pending):
-                        if self._blocklist.is_blocked(src):
-                            continue
-                        source_datapath = self._datapath_for_ip(src)
-                        if source_datapath is not None:
-                            self._block(source_datapath, src)
-                    self._flow_attack_sources.pop(dst, None)
-            elif detection.status is DetectionStatus.NORMAL:
-                self._flow_attack_sources.pop(dst, None)
-
         pps_limits = self._detector.global_limits()
         if pps_limits is not None:
             self._reporter.global_limits("PPS", *pps_limits)
         bps_limits = self._bps_detector.global_limits(minimum_rate=0.0)
         if bps_limits is not None:
             self._reporter.global_limits("bytes/s", *bps_limits)
-        flow_limits = self._flow_detector.global_limits(minimum_rate=1.0)
-        if flow_limits is not None:
-            self._reporter.global_limits("fluxos novos/s", *flow_limits)
 
         every = self._config.summary_every_cycles
         if every and cycle > 0 and cycle % every == 0:
