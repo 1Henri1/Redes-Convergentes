@@ -208,7 +208,10 @@ class SdnDdosController(app_manager.OSKenApp):
                     "destino {}".format(dst), detection,
                     self._config.required_anomalies, "fluxos novos/s",
                 )
-                if detection.should_block:
+                # Uma anomalia agregada por destino representa um pico
+                # possivelmente distribuído: bloqueia já todas as origens
+                # observadas na janela, sem esperar uma segunda janela.
+                if detection.status is DetectionStatus.ANOMALY:
                     for src in sorted(pending):
                         if self._blocklist.is_blocked(src):
                             continue
