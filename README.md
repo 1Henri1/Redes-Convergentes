@@ -60,9 +60,9 @@ O controlador calcula três métricas:
 
 Cada detector usa uma baseline estatística e um limite baseado em média + fator × desvio padrão, com um limite mínimo adicional. A baseline precisa ser formada antes que o detector classifique anomalias. Para PPS e bytes/s, a baseline é construída com taxas positivas do primeiro par observado. Para fluxos novos/s, janelas sem novos fluxos também entram na baseline, pois representam comportamento normal. Taxas anômalas não atualizam o histórico. O detector de fluxos novos usa uma janela anômala para acionar mitigação: se muitos fluxos novos forem direcionados ao mesmo destino, bloqueia as origens que contribuíram para a rajada. Os bloqueios são temporários.
 
-**Importante:** `ping` é adequado para testar PPS e bytes/s, mas não é um bom teste de criação de muitos fluxos, pois pings repetidos normalmente reutilizam o mesmo identificador ICMP. Para testar fluxos novos, use conexões TCP distintas, por exemplo com `iperf3` e múltiplos fluxos paralelos.
+**Gerador configurável:** o script `tools/generate_traffic.py` permite testar as três métricas com TCP ou UDP sem instalar `iperf3`. Cada socket cliente representa um fluxo distinto; tamanho e intervalo dos envios controlam o volume e a intensidade aproximada. O número de pacotes real pode variar devido ao TCP/IP e ao comportamento do sistema, então use os contadores do controlador/switch para medi-lo.
 
-Execute `pingall` antes dos testes para o controlador aprender os hosts. Durante a calibração, gere tráfego normal e aguarde aparecerem os limites globais no log.
+Execute `pingall` antes dos testes para o controlador aprender os hosts. Durante a calibração, gere tráfego normal e aguarde aparecerem os limites globais no log. Os comandos abaixo assumem a topologia `single,4` (h1–h4) e que o repositório está acessível no sistema de arquivos da VM.
 
 ### Tráfego normal
 
@@ -88,35 +88,45 @@ mininet> h4 ping -i 0.1 h2 > /dev/null &
 
 Esse teste aumenta a taxa de pacotes direcionados ao mesmo destino e permite observar PPS, bytes/s e a reação do bloqueio. Não garante, por si só, que haverá muitos fluxos novos.
 
-### Testar novos fluxos TCP por segundo
+### Preparar o servidor de teste
 
-Instale o `iperf3` no sistema Debian/Ubuntu usado pela VM, se necessário:
-
-```bash
-sudo apt install iperf3
-```
-
-No prompt do Mininet, inicie o servidor no destino:
+Inicie um servidor TCP em h2. Para testar UDP, troque `--protocol tcp` por `--protocol udp`.
 
 ```text
-mininet> h2 iperf3 -s &
+mininet> h2 python3 tools/generate_traffic.py --server --protocol tcp --port 9000 &
 ```
 
-Gere múltiplas conexões TCP simultâneas a partir de um host:
+### Testar fluxos, pacotes e bytes com TCP
+
+Em h1, abra 20 conexões TCP, envie blocos de 1200 bytes por 10 segundos e espere 10 ms entre envios de cada conexão:
 
 ```text
-mininet> h1 iperf3 -c 10.0.0.2 -P 20 -t 10 &
+mininet> h1 python3 tools/generate_traffic.py --dst 10.0.0.2 --protocol tcp --port 9000 --flows 20 --duration 10 --payload-size 1200 --interval 0.01
 ```
 
-Para simular uma rajada distribuída, inicie clientes de vários hosts quase ao mesmo tempo, todos direcionados para `10.0.0.2`:
+- **Fluxos novos/s:** aumente `--flows`. Cada conexão TCP cliente abre um fluxo novo.
+- **Pacotes/s e bytes/s:** diminua `--interval` para aumentar a frequência ou aumente `--payload-size` para enviar mais dados por envio.
+- **Carga leve:** use, por exemplo, `--flows 2 --duration 10 --payload-size 256 --interval 0.1`.
+
+Para testar várias origens simultaneamente, inicie clientes semelhantes em h1, h3 e h4, todos apontando para `10.0.0.2`. Evite iniciar uma carga alta antes da baseline ser formada.
+
+### Testar com UDP
+
+Inicie um servidor UDP em h2:
 
 ```text
-mininet> h1 iperf3 -c 10.0.0.2 -P 20 -t 10 &
-mininet> h3 iperf3 -c 10.0.0.2 -P 20 -t 10 &
-mininet> h4 iperf3 -c 10.0.0.2 -P 20 -t 10 &
+mininet> h2 python3 tools/generate_traffic.py --server --protocol udp --port 9000 &
 ```
 
-Observe no controlador as linhas `[FLUXOS NOVOS/ANÁLISE]`, `[LIMITES GLOBAIS] fluxos novos/s` e `[MITIGAÇÃO]`. Se a taxa ultrapassar o limite estatístico, as origens que contribuíram para a rajada devem ser bloqueadas. O resultado depende da baseline, do intervalo de monitoramento e da taxa efetivamente observada.
+Em h1, gere tráfego com 20 sockets UDP, cada um enviando blocos de 1200 bytes por 10 segundos:
+
+```text
+mininet> h1 python3 tools/generate_traffic.py --dst 10.0.0.2 --protocol udp --port 9000 --flows 20 --duration 10 --payload-size 1200 --interval 0.01
+```
+
+UDP não estabelece uma conexão de transporte, mas o controlador diferencia os fluxos pela tupla de protocolo, IPs e portas. Cada socket cliente usa uma porta de origem própria.
+
+Observe no controlador as linhas `[TRÁFEGO/ANÁLISE]`, `[FLUXOS NOVOS/ANÁLISE]`, `[LIMITES GLOBAIS]` e `[MITIGAÇÃO]`. Os resultados dependem da baseline, do intervalo de monitoramento e da taxa realmente observada.
 
 Para parar processos em segundo plano, use `jobs`/`kill` nos hosts ou saia do Mininet.
 
