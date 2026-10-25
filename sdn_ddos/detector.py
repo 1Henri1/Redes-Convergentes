@@ -39,7 +39,7 @@ class AnomalyDetector:
         """Avalia uma métrica; somente o primeiro par forma a baseline inicial global."""
         # Não fixe a baseline em um par cuja primeira taxa seja zero:
         # isso pode impedir que a métrica forme sua baseline (especialmente bytes/s).
-        if self._baseline_pair is None and rate > 0:
+        if self._baseline_pair is None and (rate > 0 or include_zero_rates):
             self._baseline_pair = pair_id
         if not self.baseline_ready:
             if (
