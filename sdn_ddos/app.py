@@ -193,7 +193,8 @@ class SdnDdosController(app_manager.OSKenApp):
         # que contribuíram para o pico, não apenas uma origem isolada.
         for dst, flow_rate in self._rates.collect_new_flow_rates().items():
             detection = self._flow_detector.evaluate(
-                dst, flow_rate.flows_per_second, minimum_rate=0.0
+                dst, flow_rate.flows_per_second, minimum_rate=1.0,
+                include_zero_rates=True,
             )
             self._reporter.destination_flow_result(
                 dst, flow_rate.new_flows, flow_rate.flows_per_second,
@@ -224,7 +225,7 @@ class SdnDdosController(app_manager.OSKenApp):
         bps_limits = self._bps_detector.global_limits(minimum_rate=0.0)
         if bps_limits is not None:
             self._reporter.global_limits("bytes/s", *bps_limits)
-        flow_limits = self._flow_detector.global_limits(minimum_rate=0.0)
+        flow_limits = self._flow_detector.global_limits(minimum_rate=1.0)
         if flow_limits is not None:
             self._reporter.global_limits("fluxos novos/s", *flow_limits)
 
