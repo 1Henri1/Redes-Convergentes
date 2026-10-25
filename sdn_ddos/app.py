@@ -50,6 +50,7 @@ class SdnDdosController(app_manager.OSKenApp):
         self._hosts = HostTable()
         self._rates = PortRateCalculator()
         self._detector = AnomalyDetector(self._config)
+        self._bps_detector = AnomalyDetector(self._config)
         self._blocklist = BlockList(self._config.block_time)
         self._flows = FlowManager()
         self._reporter = ConsoleReporter()
@@ -185,9 +186,12 @@ class SdnDdosController(app_manager.OSKenApp):
             if datapath is not None:
                 self._process_pair_rate(datapath, src, dst, rate)
 
-        limits = self._detector.global_limits()
-        if limits is not None:
-            self._reporter.global_limits(*limits)
+        pps_limits = self._detector.global_limits()
+        if pps_limits is not None:
+            self._reporter.global_limits("PPS", *pps_limits)
+        bps_limits = self._bps_detector.global_limits(minimum_rate=0.0)
+        if bps_limits is not None:
+            self._reporter.global_limits("bits/s", *bps_limits)
 
         every = self._config.summary_every_cycles
         if every and cycle > 0 and cycle % every == 0:
@@ -210,22 +214,29 @@ class SdnDdosController(app_manager.OSKenApp):
     def _process_pair_rate(self, datapath: Any, src: str, dst: str, rate: Any) -> None:
         """Avalia a taxa do par, mas mantém a mitigação no IP de origem."""
         pair_id = "{}->{}".format(src, dst)
-        detection = self._detector.evaluate(pair_id, rate.pps)
-        self._reporter.pair_result(src, dst, rate, detection, self._config.required_anomalies)
-        self._handle_detection(datapath, src, pair_id, detection)
+        pps_detection = self._detector.evaluate(pair_id, rate.pps)
+        bps_detection = self._bps_detector.evaluate(pair_id, rate.bps, minimum_rate=0.0)
+        self._reporter.pair_result(
+            src, dst, rate, pps_detection, bps_detection, self._config.required_anomalies
+        )
+        self._handle_detection(datapath, src, pair_id, pps_detection, "PPS", bps_detection, "bits/s")
 
     def _handle_detection(
-        self, datapath: Any, src: str, pair_id: str, detection: Detection
+        self, datapath: Any, src: str, pair_id: str,
+        first: Detection, first_metric: str,
+        second: Detection, second_metric: str,
     ) -> None:
-        """Registra o resultado do par e bloqueia a origem se a anomalia persistir."""
-        if detection.status is DetectionStatus.BASELINE:
-            return
-        if detection.status is DetectionStatus.NORMAL:
-            return
-
-        self._stats.detections += 1
-        self._reporter.anomaly(pair_id, detection, self._config.required_anomalies)
-        if detection.should_block:
+        """Registra anomalias de PPS/BPS e bloqueia a origem se alguma persistir."""
+        should_block = False
+        for detection, metric in ((first, first_metric), (second, second_metric)):
+            if detection.status is not DetectionStatus.ANOMALY:
+                continue
+            self._stats.detections += 1
+            self._reporter.anomaly(
+                pair_id, detection, self._config.required_anomalies, metric
+            )
+            should_block = should_block or detection.should_block
+        if should_block:
             self._block(datapath, src)
 
     def _block(self, datapath: Any, ip: str) -> None:
