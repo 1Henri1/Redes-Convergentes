@@ -129,9 +129,10 @@ def main():
     for thread in threads:
         thread.join()
     elapsed = time.monotonic() - started
+    established = len(connected) if args.protocol == "tcp" else args.flows
     print(
         f"[CLIENT] protocol={args.protocol} destination={args.dst}:{args.port} "
-        f"flows={args.flows} established={len(connected) if args.protocol == \"tcp\" else args.flows} "
+        f"flows={args.flows} established={established} "
         f"payload={args.payload_size}B duration={elapsed:.2f}s",
         flush=True,
     )
