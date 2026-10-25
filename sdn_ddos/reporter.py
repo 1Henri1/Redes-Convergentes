@@ -70,7 +70,7 @@ class ConsoleReporter:
 
         self._log.info(
             "[TRÁFEGO/ANÁLISE] Origem: %-15s | Destino: %-15s | "
-            "PPS: %6.2f (%s) | bytes/s: %10.2f (%s) | Pkts: %-4s",
+            "PPS: %6.2f (%s) | bits/s: %10.2f (%s) | Pkts: %-4s",
             src, dst, rate.pps, status(pps_detection), rate.bps,
             status(bps_detection), rate.delta_packets,
         )
@@ -87,23 +87,6 @@ class ConsoleReporter:
             "[IP DE DESTINO BLOQUEADO] Origem: %-15s | Destino: %-15s | "
             "PPS: %6.2f | bytes/s: %10.2f",
             src, dst, rate.pps, rate.bps,
-        )
-
-    def destination_flow_result(
-        self, dst: str, new_flows: int, flows_per_second: float,
-        sources: int, detection: Detection, required: int,
-    ) -> None:
-        """Registra a taxa agregada de novos fluxos recebidos por destino."""
-        if detection.status is DetectionStatus.BASELINE:
-            status = "BASELINE %s/%s" % (detection.baseline_size, required)
-        elif detection.status is DetectionStatus.ANOMALY:
-            status = "ANOMALIA %s/%s" % (detection.consecutive_anomalies, required)
-        else:
-            status = "NORMAL"
-        self._log.info(
-            "[FLUXOS NOVOS/ANÁLISE] Destino: %-15s | Novos fluxos: %-4s | "
-            "Fluxos/s: %8.2f (%s) | Origens novas: %s",
-            dst, new_flows, flows_per_second, status, sources,
         )
 
     def baseline(self, pair_id: str, detection: Detection, required: int) -> None:
