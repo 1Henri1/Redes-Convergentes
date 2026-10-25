@@ -105,14 +105,15 @@ mininet> h2 iperf3 -s &
 Gere múltiplas conexões TCP simultâneas a partir de um host:
 
 ```text
-mininet> h1 iperf3 -c 10.0.0.2 -P 20 -t 10
+mininet> h1 iperf3 -c 10.0.0.2 -P 20 -t 10 &
 ```
 
-Para simular uma rajada distribuída, execute comandos semelhantes a partir de outros hosts, direcionando-os para `10.0.0.2`:
+Para simular uma rajada distribuída, inicie clientes de vários hosts quase ao mesmo tempo, todos direcionados para `10.0.0.2`:
 
 ```text
-mininet> h3 iperf3 -c 10.0.0.2 -P 20 -t 10
-mininet> h4 iperf3 -c 10.0.0.2 -P 20 -t 10
+mininet> h1 iperf3 -c 10.0.0.2 -P 20 -t 10 &
+mininet> h3 iperf3 -c 10.0.0.2 -P 20 -t 10 &
+mininet> h4 iperf3 -c 10.0.0.2 -P 20 -t 10 &
 ```
 
 Observe no controlador as linhas `[FLUXOS NOVOS/ANÁLISE]`, `[LIMITES GLOBAIS] fluxos novos/s` e `[MITIGAÇÃO]`. Se a taxa ultrapassar o limite estatístico, as origens que contribuíram para a rajada devem ser bloqueadas. O resultado depende da baseline, do intervalo de monitoramento e da taxa efetivamente observada.
