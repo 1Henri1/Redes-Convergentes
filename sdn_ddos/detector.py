@@ -33,7 +33,8 @@ class AnomalyDetector:
         return mean, std, limit
 
     def evaluate(
-        self, pair_id: str, rate: float, minimum_rate: Optional[float] = None
+        self, pair_id: str, rate: float, minimum_rate: Optional[float] = None,
+        include_zero_rates: bool = False,
     ) -> Detection:
         """Avalia uma métrica; somente o primeiro par forma a baseline inicial global."""
         # Não fixe a baseline em um par cuja primeira taxa seja zero:
@@ -41,13 +42,19 @@ class AnomalyDetector:
         if self._baseline_pair is None and rate > 0:
             self._baseline_pair = pair_id
         if not self.baseline_ready:
-            if self._baseline_pair is not None and pair_id == self._baseline_pair and rate > 0:
+            if (
+                self._baseline_pair is not None
+                and pair_id == self._baseline_pair
+                and (rate > 0 or include_zero_rates)
+            ):
                 self._history.append(rate)
             return Detection(DetectionStatus.BASELINE, rate, baseline_size=len(self._history))
 
         mean, std, limit = self.global_limits(minimum_rate)
         if rate <= 0:
             self._streaks[pair_id] = 0
+            if include_zero_rates:
+                self._history.append(0.0)
             return Detection(DetectionStatus.NORMAL, rate, len(self._history),
                              mean=mean, std=std, limit=limit)
         if rate > limit:
