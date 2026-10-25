@@ -89,6 +89,23 @@ class ConsoleReporter:
             src, dst, rate.pps, rate.bps,
         )
 
+    def destination_flow_result(
+        self, dst: str, new_flows: int, flows_per_second: float,
+        sources: int, detection: Detection, required: int,
+    ) -> None:
+        """Registra a taxa agregada de novos fluxos recebidos por destino."""
+        if detection.status is DetectionStatus.BASELINE:
+            status = "BASELINE %s/%s" % (detection.baseline_size, required)
+        elif detection.status is DetectionStatus.ANOMALY:
+            status = "ANOMALIA %s/%s" % (detection.consecutive_anomalies, required)
+        else:
+            status = "NORMAL"
+        self._log.info(
+            "[FLUXOS NOVOS/ANÁLISE] Destino: %-15s | Novos fluxos: %-4s | "
+            "Fluxos/s: %8.2f (%s) | Origens novas: %s",
+            dst, new_flows, flows_per_second, status, sources,
+        )
+
     def baseline(self, pair_id: str, detection: Detection, required: int) -> None:
         self._log.info(
             "[BASELINE] %-34s Amostra %s/%s | PPS: %.2f",
