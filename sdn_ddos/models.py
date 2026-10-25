@@ -25,7 +25,7 @@ class PortRate:
 
 @dataclass(frozen=True)
 class Detection:
-    """Veredito do detector para uma amostra de PPS.
+    """Veredito do detector para uma amostra de taxa (PPS ou bits/s).
 
     ``mean``, ``std`` e ``limit`` só são preenchidos depois que a linha de
     base está formada.
