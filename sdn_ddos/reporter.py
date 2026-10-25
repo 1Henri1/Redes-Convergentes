@@ -60,7 +60,7 @@ class ConsoleReporter:
         self, src: str, dst: str, rate: PortRate,
         pps_detection: Detection, bps_detection: Detection, required: int
     ) -> None:
-        """Registra tráfego e os resultados de PPS e bits/s em uma única linha."""
+        """Registra tráfego e os resultados de PPS e bytes/s em uma única linha."""
         def status(detection: Detection) -> str:
             if detection.status is DetectionStatus.BASELINE:
                 return "BASELINE %s/%s" % (detection.baseline_size, required)
@@ -70,7 +70,7 @@ class ConsoleReporter:
 
         self._log.info(
             "[TRÁFEGO/ANÁLISE] Origem: %-15s | Destino: %-15s | "
-            "PPS: %6.2f (%s) | bits/s: %10.2f (%s) | Pkts: %-4s",
+            "PPS: %6.2f (%s) | bytes/s: %10.2f (%s) | Pkts: %-4s",
             src, dst, rate.pps, status(pps_detection), rate.bps,
             status(bps_detection), rate.delta_packets,
         )
@@ -78,14 +78,14 @@ class ConsoleReporter:
     def blocked_traffic(self, src: str, dst: str, rate: PortRate) -> None:
         self._log.warning(
             "[IP DE ORIGEM BLOQUEADO] Origem: %-15s | Destino: %-15s | "
-            "PPS: %6.2f | bits/s: %10.2f",
+            "PPS: %6.2f | bytes/s: %10.2f",
             src, dst, rate.pps, rate.bps,
         )
 
     def blocked_destination_traffic(self, src: str, dst: str, rate: PortRate) -> None:
         self._log.warning(
             "[IP DE DESTINO BLOQUEADO] Origem: %-15s | Destino: %-15s | "
-            "PPS: %6.2f | bits/s: %10.2f",
+            "PPS: %6.2f | bytes/s: %10.2f",
             src, dst, rate.pps, rate.bps,
         )
 
@@ -111,8 +111,8 @@ class ConsoleReporter:
 
     def global_limits(self, metric: str, mean: float, std: float, limit: float) -> None:
         self._log.info(
-            "[LIMITES GLOBAIS] %s | Média: %.2f | Desvio: %.2f | Limite: %.2f",
-            metric, mean, std, limit,
+            "[LIMITES GLOBAIS] %s | Média: %.2f %s | Desvio: %.2f %s | Limite: %.2f %s",
+            metric, mean, metric, std, metric, limit, metric,
         )
 
     # --- Mitigação -------------------------------------------------------
