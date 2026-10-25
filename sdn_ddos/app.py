@@ -10,6 +10,7 @@ informado a ``run_apps`` (``sdn_ddos.app``); por isso ela não é reexportada.
 """
 
 import logging
+from dataclasses import replace
 from typing import Any, Dict
 
 from os_ken.base import app_manager
@@ -51,7 +52,9 @@ class SdnDdosController(app_manager.OSKenApp):
         self._rates = PortRateCalculator()
         self._detector = AnomalyDetector(self._config)
         self._bps_detector = AnomalyDetector(self._config)
-        self._flow_detector = AnomalyDetector(self._config)
+        # Rajadas de novos fluxos são mitigadas na primeira janela anômala.
+        self._flow_config = replace(self._config, required_anomalies=1)
+        self._flow_detector = AnomalyDetector(self._flow_config)
         self._flow_attack_sources: Dict[str, set[str]] = {}
         self._blocklist = BlockList(self._config.block_time)
         self._flows = FlowManager()
@@ -198,7 +201,7 @@ class SdnDdosController(app_manager.OSKenApp):
             )
             self._reporter.destination_flow_result(
                 dst, flow_rate.new_flows, flow_rate.flows_per_second,
-                len(flow_rate.sources), detection, self._config.required_anomalies,
+                len(flow_rate.sources), detection, self._flow_config.required_anomalies,
             )
             if detection.status is DetectionStatus.ANOMALY:
                 pending = self._flow_attack_sources.setdefault(dst, set())
@@ -206,12 +209,11 @@ class SdnDdosController(app_manager.OSKenApp):
                 self._stats.detections += 1
                 self._reporter.anomaly(
                     "destino {}".format(dst), detection,
-                    self._config.required_anomalies, "fluxos novos/s",
+                    self._flow_config.required_anomalies, "fluxos novos/s",
                 )
-                # Uma anomalia agregada por destino representa um pico
-                # possivelmente distribuído: bloqueia já todas as origens
-                # observadas na janela, sem esperar uma segunda janela.
-                if detection.status is DetectionStatus.ANOMALY:
+                # Uma rajada agregada por destino pode ser distribuída:
+                # bloqueia todas as origens que contribuíram nesta janela.
+                if detection.should_block:
                     for src in sorted(pending):
                         if self._blocklist.is_blocked(src):
                             continue
