@@ -34,6 +34,7 @@ class PortRateCalculator:
         self._packets: Dict[PairKey, int] = defaultdict(int)
         self._bytes: Dict[PairKey, int] = defaultdict(int)
         self._previous: Dict[PairKey, _Snapshot] = {}
+        self._zero_cycles: Dict[PairKey, int] = defaultdict(int)
         self._last_prune = self._clock()
 
 
@@ -99,6 +100,20 @@ class PortRateCalculator:
             dp, db = packets - previous.packets, byte_count - previous.bytes
             if elapsed <= 0 or dp < 0 or db < 0:
                 continue
+
+            if dp == 0:
+                self._zero_cycles[pair] += 1
+                if self._zero_cycles[pair] >= 2:
+                    # Remove pares inativos após duas janelas consecutivas sem
+                    # pacotes; não continuam poluindo o log com taxas zeradas.
+                    self._packets.pop(pair, None)
+                    self._bytes.pop(pair, None)
+                    self._previous.pop(pair, None)
+                    self._zero_cycles.pop(pair, None)
+                    continue
+            else:
+                self._zero_cycles[pair] = 0
+
             rates[pair] = PortRate(dp, db, dp / elapsed, db / elapsed)
         return rates
 
