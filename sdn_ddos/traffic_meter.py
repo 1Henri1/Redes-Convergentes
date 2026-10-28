@@ -22,10 +22,10 @@ class _Snapshot:
 
 
 class PortRateCalculator:
-    """Calcula PPS e bits/s por par, excluindo respostas identificáveis.
+    """Calcula PPS e bytes/s por par, excluindo respostas identificáveis.
 
     A tupla de fluxo é mantida apenas para reconhecer tráfego de retorno;
-    a detecção utiliza exclusivamente PPS e bits/s. Fluxos inativos expiram.
+    a detecção utiliza exclusivamente PPS e bytes/s. Fluxos inativos expiram.
     """
 
     def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
