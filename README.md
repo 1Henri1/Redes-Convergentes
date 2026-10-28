@@ -38,15 +38,17 @@ Use o novo iniciador de rede. Ele aplica largura de banda, atraso, jitter e fila
 sudo python3 tools/run_mininet.py
 ```
 
-Parâmetros padrão por enlace: **10 Mbps**, **5 ms de atraso**, **1 ms de jitter**, fila de **100 pacotes** e **0% de perda artificial**. A perda pode ocorrer naturalmente quando as filas ficam cheias. O script também inicia uma sonda ICMP de h1 para h4 e imprime periodicamente pacotes enviados, recebidos, perdidos, percentual de perda e RTT médio.
+Parâmetros padrão por enlace: **10 Mbps**, **20 ms de atraso**, **1 ms de jitter**, fila de **100 pacotes** e **0% de perda artificial**. Como h1→h4 atravessa dois enlaces e a resposta percorre o caminho inverso, o RTT esperado sem congestionamento é aproximadamente **80 ms (0,08 s)**. O objetivo é manter a média próxima de 0,1 s ou abaixo disso em condições normais; sobrecarga do host ou congestionamento podem elevar o RTT acima desse valor. A perda pode ocorrer naturalmente quando as filas ficam cheias. O script inicia uma sonda ICMP de h1 para h4 e imprime periodicamente pacotes enviados, recebidos, perdidos, percentual de perda e RTT médio.
 
 Para alterar os parâmetros:
 
 ```bash
-sudo python3 tools/run_mininet.py --bw 10 --delay 5ms --jitter 1ms --queue 100 --loss 0
+sudo python3 tools/run_mininet.py --bw 10 --delay 20ms --jitter 1ms --queue 100 --loss 0
 ```
 
-`--loss` é opcional e adiciona perda artificial; mantenha em `0` para medir perdas causadas por congestionamento. O resumo ICMP é uma medição de conectividade entre h1 e h4, não uma contagem de todos os pacotes da rede. A sonda gera tráfego adicional e aparece nas métricas do controlador.
+`--loss` é opcional e adiciona perda artificial; mantenha em `0` para medir perdas causadas por congestionamento. Para mudar o atraso, use `--delay 20ms`; valores maiores elevam o RTT. O resumo ICMP é uma medição de conectividade entre h1 e h4, não uma contagem de todos os pacotes da rede. A sonda gera tráfego adicional e aparece nas métricas do controlador.
+
+No primeiro terminal, o controlador deixa de exibir um par origem-destino quando ele registra **zero pacotes em duas coletas consecutivas**. Com o intervalo padrão de 5 segundos, isso corresponde a aproximadamente 10 segundos sem pacotes; quando o tráfego voltar, o par reaparece após uma nova coleta inicial.
 
 ### Teste básico (dentro do prompt `mininet>`)
 
