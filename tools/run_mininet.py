@@ -19,7 +19,7 @@ from typing import Optional
 
 from mininet.cli import CLI
 from mininet.link import TCLink
-from mininet.log import setLogLevel, info, warn
+from mininet.log import setLogLevel, info
 from mininet.net import Mininet
 from mininet.node import OVSSwitch, RemoteController
 from mininet.topo import Topo
