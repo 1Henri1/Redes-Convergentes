@@ -10,6 +10,7 @@ informado a ``run_apps`` (``sdn_ddos.app``); por isso ela não é reexportada.
 """
 
 import logging
+import time
 from typing import Any, Dict
 
 from os_ken.base import app_manager
@@ -21,7 +22,7 @@ from os_ken.controller.handler import (
     set_ev_cls,
 )
 from os_ken.lib import hub
-from os_ken.lib.packet import arp, ethernet, ipv4, packet
+from os_ken.lib.packet import arp, ethernet, icmp, ipv4, packet
 from os_ken.ofproto import ofproto_v1_3
 
 from .blocklist import BlockList
@@ -56,6 +57,9 @@ class SdnDdosController(app_manager.OSKenApp):
         self._reporter = ConsoleReporter()
         self._stats = ControllerStats()
         self._datapaths: Dict[int, Any] = {}
+        # Telemetria dos pings manuais: chave do pedido = IPs, ID ICMP e sequência.
+        self._icmp_pending: Dict[tuple, tuple[float, tuple]] = {}
+        self._icmp_stats: Dict[tuple, Dict[str, float]] = {}
 
         self._reporter.banner(self._config)
         self._monitor_thread = hub.spawn(self._monitor_loop)
@@ -166,7 +170,8 @@ class SdnDdosController(app_manager.OSKenApp):
             hub.sleep(self._config.monitor_interval)
 
     def _run_monitor_cycle(self, cycle: int) -> None:
-        """Executa um ciclo: expira bloqueios, coleta estatísticas e resume."""
+        """Executa um ciclo: expira bloqueios e pedidos ICMP, coleta taxas e resume."""
+        self._expire_icmp_requests()
         for ip in self._blocklist.pop_expired():
             self._reporter.block_expired(ip)
 
@@ -198,10 +203,74 @@ class SdnDdosController(app_manager.OSKenApp):
             self._reporter.summary(self._stats, len(self._datapaths), len(self._blocklist))
 
     def _record_packet(self, pkt: packet.Packet) -> None:
-        """Registra somente pacotes iniciadores, excluindo respostas."""
+        """Registra taxas e mede os pings manuais observados pelo switch."""
         ip_pkt = pkt.get_protocol(ipv4.ipv4)
-        if ip_pkt is not None:
-            self._rates.record_packet(pkt, ip_pkt)
+        if ip_pkt is None:
+            return
+        self._rates.record_packet(pkt, ip_pkt)
+        icmp_pkt = pkt.get_protocol(icmp.icmp)
+        data = getattr(icmp_pkt, "data", None) if icmp_pkt is not None else None
+        ident = getattr(data, "id", None)
+        seq = getattr(data, "seq", None)
+        if ident is None or seq is None:
+            return
+
+        now = time.monotonic()
+        if icmp_pkt.type == 8:  # Echo Request
+            session = (ip_pkt.src, ip_pkt.dst, ident)
+            request = (ip_pkt.src, ip_pkt.dst, ident, seq)
+            stats = self._icmp_stats.setdefault(
+                session, {"sent": 0, "received": 0, "lost": 0,
+                          "rtt_sum_ms": 0.0, "rtt_count": 0, "last_rtt_ms": -1.0}
+            )
+            stats["sent"] += 1
+            self._icmp_pending[request] = (now, session)
+            self._log_icmp_stats(session, stats)
+        elif icmp_pkt.type == 0:  # Echo Reply
+            request = (ip_pkt.dst, ip_pkt.src, ident, seq)
+            pending = self._icmp_pending.pop(request, None)
+            session = (ip_pkt.dst, ip_pkt.src, ident)
+            stats = self._icmp_stats.setdefault(
+                session, {"sent": 0, "received": 0, "lost": 0,
+                          "rtt_sum_ms": 0.0, "rtt_count": 0, "last_rtt_ms": -1.0}
+            )
+            stats["received"] += 1
+            if pending is not None:
+                rtt_ms = (now - pending[0]) * 1000.0
+                stats["rtt_sum_ms"] += rtt_ms
+                stats["rtt_count"] += 1
+                stats["last_rtt_ms"] = rtt_ms
+            self._log_icmp_stats(session, stats)
+
+    def _expire_icmp_requests(self) -> None:
+        """Conta como perdida a solicitação sem resposta após 2 segundos."""
+        now = time.monotonic()
+        expired = [
+            request for request, (sent_at, _session) in self._icmp_pending.items()
+            if now - sent_at >= 2.0
+        ]
+        changed_sessions = set()
+        for request in expired:
+            _sent_at, session = self._icmp_pending.pop(request)
+            self._icmp_stats[session]["lost"] += 1
+            changed_sessions.add(session)
+        for session in changed_sessions:
+            self._log_icmp_stats(session, self._icmp_stats[session])
+
+    def _log_icmp_stats(self, session: tuple, stats: Dict[str, float]) -> None:
+        src, dst, _ident = session
+        if stats["rtt_count"]:
+            rtt = "%.3f ms (médio %.3f ms)" % (
+                stats["last_rtt_ms"], stats["rtt_sum_ms"] / stats["rtt_count"]
+            )
+        else:
+            rtt = "aguardando resposta"
+        _logger.info(
+            "[PING MANUAL] %s -> %s | Enviados: %d | Recebidos: %d | "
+            "Perdidos: %d | RTT: %s",
+            src, dst, int(stats["sent"]), int(stats["received"]),
+            int(stats["lost"]), rtt,
+        )
 
     def _datapath_for_ip(self, ip: str) -> Any | None:
         """Encontra o switch ao qual o host está conectado."""
