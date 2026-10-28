@@ -227,30 +227,28 @@ class SdnDdosController(app_manager.OSKenApp):
                           "interval_rtt_sum_ms": 0.0, "interval_rtt_count": 0,
                           "interval_last_rtt_ms": -1.0}
             )
-            stats["sent"] += 1
-            stats["interval_sent"] += 1
+            # A solicitação só entra na contagem quando seu resultado é
+            # conhecido (resposta recebida ou timeout), mantendo enviados = recebidos + perdidos.
             self._icmp_pending[request] = (now, session)
         elif icmp_pkt.type == 0:  # Echo Reply
             request = (ip_pkt.dst, ip_pkt.src, ident, seq)
             pending = self._icmp_pending.pop(request, None)
-            session = (ip_pkt.dst, ip_pkt.src, ident)
-            stats = self._icmp_stats.setdefault(
-                session, {"sent": 0, "received": 0, "lost": 0,
-                          "rtt_sum_ms": 0.0, "rtt_count": 0, "last_rtt_ms": -1.0,
-                          "interval_sent": 0, "interval_received": 0, "interval_lost": 0,
-                          "interval_rtt_sum_ms": 0.0, "interval_rtt_count": 0,
-                          "interval_last_rtt_ms": -1.0}
-            )
+            # Ignora respostas duplicadas ou solicitações que o switch não observou.
+            if pending is None:
+                return
+            session = pending[1]
+            stats = self._icmp_stats[session]
+            stats["sent"] += 1
+            stats["interval_sent"] += 1
             stats["received"] += 1
             stats["interval_received"] += 1
-            if pending is not None:
-                rtt_ms = (now - pending[0]) * 1000.0
-                stats["rtt_sum_ms"] += rtt_ms
-                stats["rtt_count"] += 1
-                stats["last_rtt_ms"] = rtt_ms
-                stats["interval_rtt_sum_ms"] += rtt_ms
-                stats["interval_rtt_count"] += 1
-                stats["interval_last_rtt_ms"] = rtt_ms
+            rtt_ms = (now - pending[0]) * 1000.0
+            stats["rtt_sum_ms"] += rtt_ms
+            stats["rtt_count"] += 1
+            stats["last_rtt_ms"] = rtt_ms
+            stats["interval_rtt_sum_ms"] += rtt_ms
+            stats["interval_rtt_count"] += 1
+            stats["interval_last_rtt_ms"] = rtt_ms
 
     def _expire_icmp_requests(self) -> None:
         """Conta como perdida a solicitação sem resposta após 2 segundos."""
@@ -261,8 +259,12 @@ class SdnDdosController(app_manager.OSKenApp):
         ]
         for request in expired:
             _sent_at, session = self._icmp_pending.pop(request)
-            self._icmp_stats[session]["lost"] += 1
-            self._icmp_stats[session]["interval_lost"] += 1
+            stats = self._icmp_stats[session]
+            # Conta enviados no momento da conclusão, junto ao resultado.
+            stats["sent"] += 1
+            stats["interval_sent"] += 1
+            stats["lost"] += 1
+            stats["interval_lost"] += 1
 
     def _report_icmp_interval(self) -> Dict[tuple, Dict[str, float]]:
         """Reúne e zera as métricas ICMP por par para anexá-las à linha de tráfego."""
