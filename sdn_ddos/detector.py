@@ -1,78 +1,68 @@
-"""Detecção estatística de anomalias de tráfego (sem dependência do OS-Ken)."""
-
+"""Detecção com uma baseline global inicializada pelo primeiro par observado."""
 import statistics
 from collections import defaultdict, deque
-from typing import DefaultDict, Deque, Sequence
-
+from typing import Deque, DefaultDict, Optional, Tuple
 from .config import DetectorConfig
 from .models import Detection, DetectionStatus
 
-
 class AnomalyDetector:
-    """Detecta picos de PPS por IP comparando com a linha de base do próprio IP.
-
-    Funcionamento:
-      1. As primeiras ``baseline_samples`` amostras formam a linha de base.
-      2. Depois, uma amostra é anômala se superar
-         ``max(média + k * desvio, média * min_rate_factor)``.
-         O segundo termo evita que um desvio padrão quase nulo (tráfego muito
-         regular) faça qualquer oscilação virar "ataque".
-      3. Só amostras normais entram no histórico; do contrário, um ataque
-         prolongado "ensinaria" o detector a considerá-lo normal.
-      4. O bloqueio só é sugerido após ``required_anomalies`` anomalias
-         consecutivas, para ignorar picos isolados.
-
-    A classe apenas *decide*; quem bloqueia é o chamador (SRP).
-    """
-
+    """Usa uma baseline global; sequência de anomalias é mantida por par."""
     def __init__(self, config: DetectorConfig) -> None:
         self._config = config
-        self._history: DefaultDict[str, Deque[float]] = defaultdict(
-            lambda: deque(maxlen=config.history_size)
-        )
+        self._history: Deque[float] = deque(maxlen=config.history_size)
+        self._baseline_pair: Optional[str] = None
         self._streaks: DefaultDict[str, int] = defaultdict(int)
 
-    def evaluate(self, ip: str, pps: float) -> Detection:
-        """Analisa uma amostra de PPS de um IP e atualiza o estado interno.
+    @property
+    def baseline_pair(self) -> Optional[str]:
+        return self._baseline_pair
 
-        Args:
-            ip: IP de origem do tráfego medido.
-            pps: Pacotes por segundo na última janela.
+    @property
+    def baseline_ready(self) -> bool:
+        return len(self._history) >= self._config.baseline_samples
 
-        Returns:
-            O veredito. Quando ``should_block`` é ``True``, a sequência de
-            anomalias do IP já foi zerada, pronta para um novo ciclo.
-        """
-        history = self._history[ip]
+    def global_limits(self, minimum_rate: Optional[float] = None) -> Optional[Tuple[float, float, float]]:
+        """Retorna média, desvio e limite globais, se a baseline estiver pronta."""
+        if not self.baseline_ready:
+            return None
+        mean = statistics.fmean(self._history)
+        std = statistics.stdev(self._history)
+        floor = self._config.minimum_pps if minimum_rate is None else minimum_rate
+        limit = max(mean + self._config.threshold_factor * std,
+                    mean * self._config.min_rate_factor, floor)
+        return mean, std, limit
 
-        if len(history) < self._config.baseline_samples:
-            history.append(pps)
-            return Detection(DetectionStatus.BASELINE, pps, baseline_size=len(history))
+    def evaluate(
+        self, pair_id: str, rate: float, minimum_rate: Optional[float] = None,
+        include_zero_rates: bool = False,
+    ) -> Detection:
+        """Avalia uma métrica; somente o primeiro par forma a baseline inicial global."""
+        # Não fixe a baseline em um par cuja primeira taxa seja zero:
+        # isso pode impedir que a métrica forme sua baseline (especialmente bytes/s).
+        if self._baseline_pair is None and (rate > 0 or include_zero_rates):
+            self._baseline_pair = pair_id
+        if not self.baseline_ready:
+            if (
+                self._baseline_pair is not None
+                and pair_id == self._baseline_pair
+                and (rate > 0 or include_zero_rates)
+            ):
+                self._history.append(rate)
+            return Detection(DetectionStatus.BASELINE, rate, baseline_size=len(self._history))
 
-        mean = statistics.fmean(history)
-        std = statistics.stdev(history)
-        limit = self._compute_limit(history)
-
-        if pps > limit:
-            streak = self._streaks[ip] + 1
+        mean, std, limit = self.global_limits(minimum_rate)
+        if rate <= 0:
+            self._streaks[pair_id] = 0
+            if include_zero_rates:
+                self._history.append(0.0)
+            return Detection(DetectionStatus.NORMAL, rate, len(self._history),
+                             mean=mean, std=std, limit=limit)
+        if rate > limit:
+            streak = self._streaks[pair_id] + 1
             should_block = streak >= self._config.required_anomalies
-            self._streaks[ip] = 0 if should_block else streak
-            return Detection(
-                DetectionStatus.ANOMALY, pps, len(history),
-                mean=mean, std=std, limit=limit,
-                consecutive_anomalies=streak, should_block=should_block,
-            )
-
-        self._streaks[ip] = 0
-        history.append(pps)
-        return Detection(
-            DetectionStatus.NORMAL, pps, len(history),
-            mean=mean, std=std, limit=limit,
-        )
-
-    def _compute_limit(self, history: Sequence[float]) -> float:
-        """Calcula o limite acima do qual uma amostra é considerada anômala."""
-        mean = statistics.fmean(history)
-        statistical = mean + self._config.threshold_factor * statistics.stdev(history)
-        relative = mean * self._config.min_rate_factor
-        return max(statistical, relative)
+            self._streaks[pair_id] = 0 if should_block else streak
+            return Detection(DetectionStatus.ANOMALY, rate, len(self._history), mean=mean, std=std,
+                             limit=limit, consecutive_anomalies=streak, should_block=should_block)
+        self._streaks[pair_id] = 0
+        self._history.append(rate)
+        return Detection(DetectionStatus.NORMAL, rate, len(self._history), mean=mean, std=std, limit=limit)

@@ -10,7 +10,7 @@ from typing import List, Optional
 from .config import DetectorConfig
 from .flow_manager import BLOCK_PRIORITY
 from .logging_setup import LOGGER_NAME
-from .models import ControllerStats, Detection, PortRate
+from .models import ControllerStats, Detection, DetectionStatus, PortRate
 
 _WIDTH = 70
 
@@ -40,6 +40,7 @@ class ConsoleReporter:
             f"Amostras de baseline  : {config.baseline_samples}",
             f"Fator estatístico     : {config.threshold_factor:g}x",
             f"Fator mínimo          : {config.min_rate_factor:g}x",
+            f"Piso absoluto         : {config.minimum_pps:g} PPS",
             f"Anomalias necessárias : {config.required_anomalies}",
             f"Tempo de bloqueio     : {config.block_time}s",
         ], fill="="))
@@ -55,42 +56,86 @@ class ConsoleReporter:
 
     # --- Tráfego e detecção ------------------------------------------------
 
-    def traffic(self, ip: str, port: int, rate: PortRate, blocked: bool) -> None:
+    def pair_result(
+        self, src: str, dst: str, rate: PortRate,
+        pps_detection: Detection, bps_detection: Detection, required: int,
+        icmp_stats: Optional[dict] = None,
+    ) -> None:
+        """Registra tráfego e os resultados de PPS e bytes/s em uma única linha."""
+        def status(detection: Detection) -> str:
+            if detection.status is DetectionStatus.BASELINE:
+                return "BASELINE %s/%s" % (detection.baseline_size, required)
+            if detection.status is DetectionStatus.ANOMALY:
+                return "ANOMALIA %s/%s" % (detection.consecutive_anomalies, required)
+            return "NORMAL"
+
+        ping_info = ""
+        if icmp_stats is not None:
+            if icmp_stats["rtt_count"]:
+                rtt_info = "%.3f ms (médio %.3f ms)" % (
+                    icmp_stats["last_rtt_ms"],
+                    icmp_stats["rtt_sum_ms"] / icmp_stats["rtt_count"],
+                )
+            else:
+                rtt_info = "sem respostas"
+            ping_info = (
+                " | ICMP enviados: %d | recebidos: %d | perdidos: %d | RTT: %s"
+                % (
+                    icmp_stats["sent"], icmp_stats["received"],
+                    icmp_stats["lost"], rtt_info,
+                )
+            )
         self._log.info(
-            "[TRÁFEGO] IP: %-15s | Porta: %-2s | PPS: %6.2f | Bytes/s: %9.2f | "
-            "Pkts: %-4s | %s",
-            ip, port, rate.pps, rate.bps, rate.delta_packets,
-            "BLOQUEADO" if blocked else "NORMAL",
+            "[TRÁFEGO/ANÁLISE] Origem: %-15s | Destino: %-15s | "
+            "PPS: %6.2f (%s) | bytes/s: %10.2f (%s) | Pkts: %-4s%s",
+            src, dst, rate.pps, status(pps_detection), rate.bps,
+            status(bps_detection), rate.delta_packets, ping_info,
         )
 
-    def baseline(self, ip: str, detection: Detection, required: int) -> None:
-        self._log.info(
-            "[BASELINE] %-15s Amostra %s/%s | PPS: %.2f",
-            ip, detection.baseline_size, required, detection.pps,
-        )
-
-    def normal(self, ip: str, detection: Detection) -> None:
-        self._log.info(
-            "[ANÁLISE] %-15s PPS: %6.2f | Limite: %6.2f | Status: NORMAL",
-            ip, detection.pps, detection.limit,
-        )
-
-    def anomaly(self, ip: str, detection: Detection, required: int) -> None:
+    def blocked_traffic(self, src: str, dst: str, rate: PortRate) -> None:
         self._log.warning(
-            "\n[!] ANOMALIA DETECTADA\n"
-            "    IP        : %s\n"
-            "    PPS       : %.2f\n"
-            "    Média     : %.2f\n"
-            "    Desvio    : %.2f\n"
-            "    Limite    : %.2f\n"
-            "    Sequência : %s/%s",
-            ip, detection.pps, detection.mean, detection.std, detection.limit,
-            detection.consecutive_anomalies, required,
+            "[IP DE ORIGEM BLOQUEADO] Origem: %-15s | Destino: %-15s | "
+            "PPS: %6.2f | bytes/s: %10.2f",
+            src, dst, rate.pps, rate.bps,
+        )
+
+    def blocked_destination_traffic(self, src: str, dst: str, rate: PortRate) -> None:
+        self._log.warning(
+            "[IP DE DESTINO BLOQUEADO] Origem: %-15s | Destino: %-15s | "
+            "PPS: %6.2f | bytes/s: %10.2f",
+            src, dst, rate.pps, rate.bps,
+        )
+
+    def baseline(self, pair_id: str, detection: Detection, required: int) -> None:
+        self._log.info(
+            "[BASELINE] %-34s Amostra %s/%s | PPS: %.2f",
+            pair_id, detection.baseline_size, required, detection.pps,
+        )
+
+    def normal(self, pair_id: str, detection: Detection) -> None:
+        self._log.info(
+            "[ANÁLISE] %-34s PPS: %6.2f | Status: NORMAL",
+            pair_id, detection.pps,
+        )
+
+    def anomaly(
+        self, pair_id: str, detection: Detection, required: int, metric: str = "PPS"
+    ) -> None:
+        self._log.warning(
+            "[MITIGAÇÃO] Anomalia de %s em %s; sequência %s/%s.",
+            metric, pair_id, detection.consecutive_anomalies, required,
+        )
+
+    def global_limits(self, metric: str, mean: float, std: float, limit: float) -> None:
+        self._log.info(
+            "[LIMITES GLOBAIS] %s | Média: %.2f %s | Desvio: %.2f %s | Limite: %.2f %s",
+            metric, mean, metric, std, metric, limit, metric,
         )
 
     # --- Mitigação -------------------------------------------------------
 
     def block_activated(self, ip: str, duration: int) -> None:
+        self._log.warning("[IP DE ORIGEM BLOQUEADO] %s por %ss", ip, duration)
         self._log.warning(_box("[BLOQUEIO ATIVADO]", [
             f"IP                 : {ip}",
             f"Duração            : {duration}s",

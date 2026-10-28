@@ -1,12 +1,17 @@
-"""Cálculo de taxas (PPS/BPS) a partir de contadores cumulativos."""
-
+"""Contabilização de tráfego por par origem-destino."""
 import time
+from collections import defaultdict
 from dataclasses import dataclass
-from typing import Callable, Dict, Optional, Tuple
+from typing import Callable, Dict, Hashable, Tuple
+
+from os_ken.lib.packet import icmp, tcp, udp
 
 from .models import PortRate
 
-PortKey = Tuple[int, int]  # (dpid, número da porta)
+FlowKey = Tuple[Hashable, ...]
+PairKey = Tuple[str, str]
+_FLOW_TTL = 120.0
+_PRUNE_INTERVAL = 30.0
 
 
 @dataclass(frozen=True)
@@ -17,58 +22,101 @@ class _Snapshot:
 
 
 class PortRateCalculator:
-    """Converte contadores ``rx_packets``/``rx_bytes`` em taxas por segundo.
+    """Calcula PPS e bytes/s por par, excluindo respostas identificáveis.
 
-    Os contadores do switch só crescem, então a taxa vem da diferença entre
-    duas leituras dividida pelo tempo decorrido.
+    A tupla de fluxo é mantida apenas para reconhecer tráfego de retorno;
+    a detecção utiliza exclusivamente PPS e bytes/s. Fluxos inativos expiram.
     """
 
     def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
-        """
-        Args:
-            clock: Fonte de tempo. ``monotonic`` é usado (e não ``time.time``)
-                para que ajustes do relógio do sistema (NTP) não distorçam
-                as taxas. É injetável para facilitar os testes.
-        """
         self._clock = clock
-        self._previous: Dict[PortKey, _Snapshot] = {}
+        self._initiators: Dict[FlowKey, float] = {}
+        self._packets: Dict[PairKey, int] = defaultdict(int)
+        self._bytes: Dict[PairKey, int] = defaultdict(int)
+        self._previous: Dict[PairKey, _Snapshot] = {}
+        self._zero_cycles: Dict[PairKey, int] = defaultdict(int)
+        self._last_prune = self._clock()
 
-    def update(self, key: PortKey, rx_packets: int, rx_bytes: int) -> Optional[PortRate]:
-        """Registra uma leitura e calcula a taxa desde a anterior.
 
-        Args:
-            key: ``(dpid, porta)`` do contador.
-            rx_packets: Total de pacotes recebidos pela porta.
-            rx_bytes: Total de bytes recebidos pela porta.
+    def _expire_flows(self, now: float) -> None:
+        if now - self._last_prune < _PRUNE_INTERVAL:
+            return
+        cutoff = now - _FLOW_TTL
+        self._initiators = {
+            key: timestamp for key, timestamp in self._initiators.items()
+            if timestamp >= cutoff
+        }
+        self._last_prune = now
 
-        Returns:
-            A taxa medida, ou ``None`` quando não há como calcular: primeira
-            leitura da porta, tempo decorrido nulo ou contador que diminuiu
-            (o switch reiniciou). Nesse último caso a leitura atual vira a
-            nova referência.
-        """
+    def record_packet(self, pkt: object, ip_pkt: object) -> None:
         now = self._clock()
-        previous = self._previous.get(key)
-        self._previous[key] = _Snapshot(rx_packets, rx_bytes, now)
+        self._expire_flows(now)
+        proto, src, dst = ip_pkt.proto, ip_pkt.src, ip_pkt.dst
+        tcp_pkt = pkt.get_protocol(tcp.tcp)
+        udp_pkt = pkt.get_protocol(udp.udp)
+        icmp_pkt = pkt.get_protocol(icmp.icmp)
 
-        if previous is None:
-            return None
+        if tcp_pkt is not None:
+            key = (proto, src, dst, tcp_pkt.src_port, tcp_pkt.dst_port)
+            reverse = (proto, dst, src, tcp_pkt.dst_port, tcp_pkt.src_port)
+            if tcp_pkt.syn and tcp_pkt.ack:
+                self._initiators[reverse] = now
+                return
+        elif udp_pkt is not None:
+            key = (proto, src, dst, udp_pkt.src_port, udp_pkt.dst_port)
+            reverse = (proto, dst, src, udp_pkt.dst_port, udp_pkt.src_port)
+        elif icmp_pkt is not None:
+            data = getattr(icmp_pkt, "data", None)
+            ident = getattr(data, "id", None)
+            key = (proto, src, dst, icmp_pkt.type, ident)
+            reverse = (proto, dst, src, 8, ident)
+            if icmp_pkt.type == 0:  # Echo Reply
+                return
+        else:
+            key, reverse = (proto, src, dst), (proto, dst, src)
 
-        elapsed = now - previous.timestamp
-        delta_packets = rx_packets - previous.packets
-        delta_bytes = rx_bytes - previous.bytes
+        # Respostas pertencentes a um fluxo já iniciado não contam como novas
+        # origens nem como novos fluxos.
+        if reverse in self._initiators:
+            self._initiators[reverse] = now
+            return
 
-        if elapsed <= 0 or delta_packets < 0 or delta_bytes < 0:
-            return None
+        self._initiators[key] = now
+        pair = (src, dst)
+        self._packets[pair] += 1
+        self._bytes[pair] += len(pkt.data)
 
-        return PortRate(
-            delta_packets=delta_packets,
-            delta_bytes=delta_bytes,
-            pps=delta_packets / elapsed,
-            bps=delta_bytes / elapsed,
-        )
+
+    def collect_rates(self) -> Dict[PairKey, PortRate]:
+        now = self._clock()
+        rates: Dict[PairKey, PortRate] = {}
+        for pair in list(self._packets):
+            previous = self._previous.get(pair)
+            packets, byte_count = self._packets[pair], self._bytes[pair]
+            self._previous[pair] = _Snapshot(packets, byte_count, now)
+            if previous is None:
+                continue
+            elapsed = now - previous.timestamp
+            dp, db = packets - previous.packets, byte_count - previous.bytes
+            if elapsed <= 0 or dp < 0 or db < 0:
+                continue
+
+            if dp == 0:
+                self._zero_cycles[pair] += 1
+                if self._zero_cycles[pair] >= 2:
+                    # Remove pares inativos após duas janelas consecutivas sem
+                    # pacotes; não continuam poluindo o log com taxas zeradas.
+                    self._packets.pop(pair, None)
+                    self._bytes.pop(pair, None)
+                    self._previous.pop(pair, None)
+                    self._zero_cycles.pop(pair, None)
+                    continue
+            else:
+                self._zero_cycles[pair] = 0
+
+            rates[pair] = PortRate(dp, db, dp / elapsed, db / elapsed)
+        return rates
 
     def forget_switch(self, dpid: int) -> None:
-        """Descarta as leituras de um switch desconectado."""
-        for key in [k for k in self._previous if k[0] == dpid]:
-            del self._previous[key]
+        """A medição por IP não é específica de um switch."""
+        return

@@ -42,22 +42,29 @@ class FlowManager:
         """
         parser = datapath.ofproto_parser
         match = parser.OFPMatch(in_port=in_port, eth_dst=eth_dst)
-        actions = [parser.OFPActionOutput(out_port)]
+        actions = [
+            parser.OFPActionOutput(out_port),
+            # Espelha cópias ao controlador para contabilizar cada pacote.
+            parser.OFPActionOutput(
+                datapath.ofproto.OFPP_CONTROLLER,
+                datapath.ofproto.OFPCML_NO_BUFFER,
+            ),
+        ]
         self._add_flow(datapath, FORWARDING_PRIORITY, match, actions)
 
     def install_drop(self, datapath: Any, ipv4_src: str, hard_timeout: int) -> None:
-        """Descarta todo o tráfego IPv4 originado em ``ipv4_src``.
+        """Bloqueia envio e recebimento IPv4 envolvendo o IP indicado.
 
-        Em OpenFlow 1.3, uma regra *sem instruções* significa descartar.
-        O ``hard_timeout`` faz o próprio switch remover o bloqueio, então a
-        mitigação termina mesmo que o controlador falhe.
+        Duas regras independentes descartam pacotes com o IP como origem ou
+        destino. Em OpenFlow 1.3, uma regra sem instruções significa descartar.
+        O timeout remove ambas as regras após o período de mitigação.
         """
         parser = datapath.ofproto_parser
-        match = parser.OFPMatch(eth_type=ether_types.ETH_TYPE_IP, ipv4_src=ipv4_src)
-        self._send_flow_mod(
-            datapath, BLOCK_PRIORITY, match, instructions=[], hard_timeout=hard_timeout
-        )
-
+        for field in ("ipv4_src", "ipv4_dst"):
+            match = parser.OFPMatch(eth_type=ether_types.ETH_TYPE_IP, **{field: ipv4_src})
+            self._send_flow_mod(
+                datapath, BLOCK_PRIORITY, match, instructions=[], hard_timeout=hard_timeout
+            )
     def forward_packet(self, datapath: Any, msg: Any, in_port: int, out_port: int) -> None:
         """Reenvia o pacote que causou o packet-in (via PacketOut).
 

@@ -10,6 +10,7 @@ informado a ``run_apps`` (``sdn_ddos.app``); por isso ela não é reexportada.
 """
 
 import logging
+import time
 from typing import Any, Dict
 
 from os_ken.base import app_manager
@@ -21,7 +22,7 @@ from os_ken.controller.handler import (
     set_ev_cls,
 )
 from os_ken.lib import hub
-from os_ken.lib.packet import arp, ethernet, ipv4, packet
+from os_ken.lib.packet import arp, ethernet, icmp, ipv4, packet
 from os_ken.ofproto import ofproto_v1_3
 
 from .blocklist import BlockList
@@ -50,11 +51,15 @@ class SdnDdosController(app_manager.OSKenApp):
         self._hosts = HostTable()
         self._rates = PortRateCalculator()
         self._detector = AnomalyDetector(self._config)
+        self._bps_detector = AnomalyDetector(self._config)
         self._blocklist = BlockList(self._config.block_time)
         self._flows = FlowManager()
         self._reporter = ConsoleReporter()
         self._stats = ControllerStats()
         self._datapaths: Dict[int, Any] = {}
+        # Telemetria dos pings manuais: chave do pedido = IPs, ID ICMP e sequência.
+        self._icmp_pending: Dict[tuple, tuple[float, tuple]] = {}
+        self._icmp_stats: Dict[tuple, Dict[str, float]] = {}
 
         self._reporter.banner(self._config)
         self._monitor_thread = hub.spawn(self._monitor_loop)
@@ -114,6 +119,12 @@ class SdnDdosController(app_manager.OSKenApp):
         self._hosts.learn_mac(dpid, eth.src, in_port)
         self._learn_ip(dpid, pkt, in_port)
 
+        # Conta o pacote inicial; cópias de regras de encaminhamento não devem
+        # ser reenviadas pelo controlador.
+        self._record_packet(pkt)
+        if msg.reason == datapath.ofproto.OFPR_ACTION:
+            return
+
         out_port = self._hosts.port_for_mac(dpid, eth.dst)
         if out_port is None:
             # Destino desconhecido: inunda e não instala regra (evita fixar
@@ -159,62 +170,170 @@ class SdnDdosController(app_manager.OSKenApp):
             hub.sleep(self._config.monitor_interval)
 
     def _run_monitor_cycle(self, cycle: int) -> None:
-        """Executa um ciclo: expira bloqueios, coleta estatísticas e resume."""
+        """Executa um ciclo: expira bloqueios e pedidos ICMP, coleta taxas e resume."""
+        self._expire_icmp_requests()
+        icmp_interval = self._report_icmp_interval()
         for ip in self._blocklist.pop_expired():
             self._reporter.block_expired(ip)
 
-        for datapath in list(self._datapaths.values()):
-            try:
-                self._flows.request_port_stats(datapath)
-            except Exception:  # noqa: BLE001 - um switch ruim não afeta os demais
-                _logger.exception("Falha ao solicitar estatísticas do datapath %s", datapath.id)
+        # Avalia cada par separadamente; anomalia confirmada bloqueia a origem.
+        for (src, dst), rate in self._rates.collect_rates().items():
+            src_blocked = self._blocklist.is_blocked(src)
+            dst_blocked = self._blocklist.is_blocked(dst)
+
+            if src_blocked:
+                self._reporter.blocked_traffic(src, dst, rate)
+            if dst_blocked:
+                self._reporter.blocked_destination_traffic(src, dst, rate)
+            if src_blocked or dst_blocked:
+                continue
+
+            datapath = self._datapath_for_ip(src)
+            if datapath is not None:
+                self._process_pair_rate(datapath, src, dst, rate, icmp_interval.get((src, dst)))
+
+        pps_limits = self._detector.global_limits()
+        if pps_limits is not None:
+            self._reporter.global_limits("PPS", *pps_limits)
+        bps_limits = self._bps_detector.global_limits(minimum_rate=0.0)
+        if bps_limits is not None:
+            self._reporter.global_limits("bytes/s", *bps_limits)
 
         every = self._config.summary_every_cycles
         if every and cycle > 0 and cycle % every == 0:
             self._reporter.summary(self._stats, len(self._datapaths), len(self._blocklist))
 
-    @set_ev_cls(ofp_event.EventOFPPortStatsReply, MAIN_DISPATCHER)
-    def _port_stats_reply_handler(self, ev: Any) -> None:
-        """Processa os contadores de cada porta do switch."""
-        datapath = ev.msg.datapath
-        for stat in ev.msg.body:
-            # Ignora portas reservadas (ex.: LOCAL), que não são hosts.
-            if stat.port_no >= datapath.ofproto.OFPP_MAX:
+    def _record_packet(self, pkt: packet.Packet) -> None:
+        """Registra taxas e mede os pings manuais observados pelo switch."""
+        ip_pkt = pkt.get_protocol(ipv4.ipv4)
+        if ip_pkt is None:
+            return
+        self._rates.record_packet(pkt, ip_pkt)
+        icmp_pkt = pkt.get_protocol(icmp.icmp)
+        data = getattr(icmp_pkt, "data", None) if icmp_pkt is not None else None
+        ident = getattr(data, "id", None)
+        seq = getattr(data, "seq", None)
+        if ident is None or seq is None:
+            return
+
+        now = time.monotonic()
+        if icmp_pkt.type == 8:  # Echo Request
+            session = (ip_pkt.src, ip_pkt.dst, ident)
+            request = (ip_pkt.src, ip_pkt.dst, ident, seq)
+            stats = self._icmp_stats.setdefault(
+                session, {"sent": 0, "received": 0, "lost": 0,
+                          "rtt_sum_ms": 0.0, "rtt_count": 0, "last_rtt_ms": -1.0,
+                          "interval_sent": 0, "interval_received": 0, "interval_lost": 0,
+                          "interval_rtt_sum_ms": 0.0, "interval_rtt_count": 0,
+                          "interval_last_rtt_ms": -1.0}
+            )
+            # A solicitação só entra na contagem quando seu resultado é
+            # conhecido (resposta recebida ou timeout), mantendo enviados = recebidos + perdidos.
+            self._icmp_pending[request] = (now, session)
+        elif icmp_pkt.type == 0:  # Echo Reply
+            request = (ip_pkt.dst, ip_pkt.src, ident, seq)
+            pending = self._icmp_pending.pop(request, None)
+            # Ignora respostas duplicadas ou solicitações que o switch não observou.
+            if pending is None:
+                return
+            session = pending[1]
+            stats = self._icmp_stats[session]
+            stats["sent"] += 1
+            stats["interval_sent"] += 1
+            stats["received"] += 1
+            stats["interval_received"] += 1
+            rtt_ms = (now - pending[0]) * 1000.0
+            stats["rtt_sum_ms"] += rtt_ms
+            stats["rtt_count"] += 1
+            stats["last_rtt_ms"] = rtt_ms
+            stats["interval_rtt_sum_ms"] += rtt_ms
+            stats["interval_rtt_count"] += 1
+            stats["interval_last_rtt_ms"] = rtt_ms
+
+    def _expire_icmp_requests(self) -> None:
+        """Conta como perdida a solicitação sem resposta após 2 segundos."""
+        now = time.monotonic()
+        expired = [
+            request for request, (sent_at, _session) in self._icmp_pending.items()
+            if now - sent_at >= 2.0
+        ]
+        for request in expired:
+            _sent_at, session = self._icmp_pending.pop(request)
+            stats = self._icmp_stats[session]
+            # Conta enviados no momento da conclusão, junto ao resultado.
+            stats["sent"] += 1
+            stats["interval_sent"] += 1
+            stats["lost"] += 1
+            stats["interval_lost"] += 1
+
+    def _report_icmp_interval(self) -> Dict[tuple, Dict[str, float]]:
+        """Reúne e zera as métricas ICMP por par para anexá-las à linha de tráfego."""
+        interval: Dict[tuple, Dict[str, float]] = {}
+        for session, stats in self._icmp_stats.items():
+            src, dst, _ident = session
+            sent = int(stats["interval_sent"])
+            received = int(stats["interval_received"])
+            lost = int(stats["interval_lost"])
+            if sent or received or lost:
+                pair = interval.setdefault((src, dst), {
+                    "sent": 0, "received": 0, "lost": 0,
+                    "rtt_sum_ms": 0.0, "rtt_count": 0, "last_rtt_ms": -1.0,
+                })
+                pair["sent"] += sent
+                pair["received"] += received
+                pair["lost"] += lost
+                pair["rtt_sum_ms"] += stats["interval_rtt_sum_ms"]
+                pair["rtt_count"] += stats["interval_rtt_count"]
+                if stats["interval_last_rtt_ms"] >= 0:
+                    pair["last_rtt_ms"] = stats["interval_last_rtt_ms"]
+
+            stats["interval_sent"] = 0
+            stats["interval_received"] = 0
+            stats["interval_lost"] = 0
+            stats["interval_rtt_sum_ms"] = 0.0
+            stats["interval_rtt_count"] = 0
+            stats["interval_last_rtt_ms"] = -1.0
+        return interval
+
+    def _datapath_for_ip(self, ip: str) -> Any | None:
+        """Encontra o switch ao qual o host está conectado."""
+        for dpid, datapath in self._datapaths.items():
+            for port in self._hosts.ports_for_switch(dpid):
+                if self._hosts.ip_for_port(dpid, port) == ip:
+                    return datapath
+        return None
+
+    def _process_pair_rate(
+        self, datapath: Any, src: str, dst: str, rate: Any,
+        icmp_stats: Dict[str, float] | None = None,
+    ) -> None:
+        """Avalia a taxa do par, mas mantém a mitigação no IP de origem."""
+        pair_id = "{}->{}".format(src, dst)
+        pps_detection = self._detector.evaluate(pair_id, rate.pps)
+        bps_detection = self._bps_detector.evaluate(pair_id, rate.bps, minimum_rate=0.0)
+        self._reporter.pair_result(
+            src, dst, rate, pps_detection, bps_detection,
+            self._config.required_anomalies, icmp_stats,
+        )
+        self._handle_detection(datapath, src, pair_id, pps_detection, "PPS", bps_detection, "bytes/s")
+
+    def _handle_detection(
+        self, datapath: Any, src: str, pair_id: str,
+        first: Detection, first_metric: str,
+        second: Detection, second_metric: str,
+    ) -> None:
+        """Registra anomalias de PPS/BPS e bloqueia a origem se alguma persistir."""
+        should_block = False
+        for detection, metric in ((first, first_metric), (second, second_metric)):
+            if detection.status is not DetectionStatus.ANOMALY:
                 continue
-            self._process_port(datapath, stat.port_no, stat.rx_packets, stat.rx_bytes)
-
-    def _process_port(self, datapath: Any, port: int, rx_packets: int, rx_bytes: int) -> None:
-        """Mede, exibe e analisa o tráfego recebido numa porta."""
-        dpid = datapath.id
-
-        # Usa rx (e não tx): mede o que o host *envia* para a rede.
-        rate = self._rates.update((dpid, port), rx_packets, rx_bytes)
-        if rate is None:
-            return
-
-        ip = self._hosts.ip_for_port(dpid, port)
-        if ip is None:
-            return
-
-        blocked = self._blocklist.is_blocked(ip)
-        self._reporter.traffic(ip, port, rate, blocked)
-        if blocked:
-            # Já está bloqueado: não reanalisa nem contamina a linha de base.
-            return
-
-        self._handle_detection(datapath, ip, self._detector.evaluate(ip, rate.pps))
-
-    def _handle_detection(self, datapath: Any, ip: str, detection: Detection) -> None:
-        """Reage ao veredito do detector (exibição, contadores e bloqueio)."""
-        if detection.status is DetectionStatus.BASELINE:
-            self._reporter.baseline(ip, detection, self._config.baseline_samples)
-        elif detection.status is DetectionStatus.NORMAL:
-            self._reporter.normal(ip, detection)
-        else:
             self._stats.detections += 1
-            self._reporter.anomaly(ip, detection, self._config.required_anomalies)
-            if detection.should_block:
-                self._block(datapath, ip)
+            self._reporter.anomaly(
+                pair_id, detection, self._config.required_anomalies, metric
+            )
+            should_block = should_block or detection.should_block
+        if should_block:
+            self._block(datapath, src)
 
     def _block(self, datapath: Any, ip: str) -> None:
         """Aplica o bloqueio no switch e o registra no controlador."""

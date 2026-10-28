@@ -15,17 +15,17 @@ class DetectionStatus(Enum):
 
 @dataclass(frozen=True)
 class PortRate:
-    """Taxa de recepção de uma porta entre duas coletas consecutivas."""
+    """Taxa de tráfego entre duas coletas consecutivas."""
 
     delta_packets: int
     delta_bytes: int
     pps: float
-    bps: float
+    bps: float  # bytes por segundo; nome legado, não é bits/s
 
 
 @dataclass(frozen=True)
 class Detection:
-    """Veredito do detector para uma amostra de PPS.
+    """Veredito do detector para uma amostra de taxa (PPS ou bytes/s).
 
     ``mean``, ``std`` e ``limit`` só são preenchidos depois que a linha de
     base está formada.
