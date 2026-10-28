@@ -40,7 +40,7 @@ class SingleSwitchTopo(Topo):
         queue_size: int = 100,
         loss: float = 0.0,
     ) -> None:
-        switch = self.addSwitch("s1")
+        switch = self.addSwitch("s1", protocols="OpenFlow13")
         for number in range(1, 5):
             host = self.addHost(f"h{number}", ip=f"10.0.0.{number}/8")
             self.addLink(
