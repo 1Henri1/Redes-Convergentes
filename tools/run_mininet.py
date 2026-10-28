@@ -25,14 +25,14 @@ class SingleSwitchTopo(Topo):
 
     def build(
         self,
-        bw: float = 10.0,
-        delay: str = "20us",
+        bw: float = 0.1,
+        delay: str = "100us",
         jitter: str = "0us",
         queue_size: int = 100,
         loss: float = 0.0,
     ) -> None:
         switch = self.addSwitch("s1", protocols="OpenFlow13")
-        for number in range(1, 5):
+        for number in range(1,11):
             host = self.addHost(f"h{number}", ip=f"10.0.0.{number}/8")
             self.addLink(
                 host,
@@ -50,8 +50,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--controller-ip", default="127.0.0.1")
     parser.add_argument("--controller-port", type=int, default=6653)
-    parser.add_argument("--bw", type=float, default=10.0, help="largura de banda por enlace (Mbps)")
-    parser.add_argument("--delay", default="20us", help="atraso por enlace; 20us visa RTT teórico de 0,08ms entre h1 e h4")
+    parser.add_argument("--bw", type=float, default=0.1, help="largura de banda por enlace (Mbps)")
+    parser.add_argument("--delay", default="100us", help="atraso por enlace; 20us visa RTT teórico de 0,08ms entre h1 e h4")
     parser.add_argument("--jitter", default="0us", help="variação de atraso (padrão: 0us)")
     parser.add_argument("--queue", type=int, default=100, help="tamanho máximo da fila em pacotes")
     parser.add_argument("--loss", type=float, default=0.0, help="perda artificial em %% (padrão: 0)")
