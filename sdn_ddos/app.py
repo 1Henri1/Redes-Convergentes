@@ -236,7 +236,10 @@ class SdnDdosController(app_manager.OSKenApp):
             session = (ip_pkt.dst, ip_pkt.src, ident)
             stats = self._icmp_stats.setdefault(
                 session, {"sent": 0, "received": 0, "lost": 0,
-                          "rtt_sum_ms": 0.0, "rtt_count": 0, "last_rtt_ms": -1.0}
+                          "rtt_sum_ms": 0.0, "rtt_count": 0, "last_rtt_ms": -1.0,
+                          "interval_sent": 0, "interval_received": 0, "interval_lost": 0,
+                          "interval_rtt_sum_ms": 0.0, "interval_rtt_count": 0,
+                          "interval_last_rtt_ms": -1.0}
             )
             stats["received"] += 1
             stats["interval_received"] += 1
@@ -256,7 +259,6 @@ class SdnDdosController(app_manager.OSKenApp):
             request for request, (sent_at, _session) in self._icmp_pending.items()
             if now - sent_at >= 2.0
         ]
-        changed_sessions = set()
         for request in expired:
             _sent_at, session = self._icmp_pending.pop(request)
             self._icmp_stats[session]["lost"] += 1
