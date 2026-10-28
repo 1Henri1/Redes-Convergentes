@@ -172,7 +172,7 @@ class SdnDdosController(app_manager.OSKenApp):
     def _run_monitor_cycle(self, cycle: int) -> None:
         """Executa um ciclo: expira bloqueios e pedidos ICMP, coleta taxas e resume."""
         self._expire_icmp_requests()
-        self._report_icmp_interval()
+        icmp_interval = self._report_icmp_interval()
         for ip in self._blocklist.pop_expired():
             self._reporter.block_expired(ip)
 
@@ -264,32 +264,34 @@ class SdnDdosController(app_manager.OSKenApp):
             self._icmp_stats[session]["lost"] += 1
             self._icmp_stats[session]["interval_lost"] += 1
 
-    def _report_icmp_interval(self) -> None:
-        """Exibe e zera os contadores de ping do último intervalo de monitoramento."""
+    def _report_icmp_interval(self) -> Dict[tuple, Dict[str, float]]:
+        """Reúne e zera as métricas ICMP por par para anexá-las à linha de tráfego."""
+        interval: Dict[tuple, Dict[str, float]] = {}
         for session, stats in self._icmp_stats.items():
+            src, dst, _ident = session
             sent = int(stats["interval_sent"])
             received = int(stats["interval_received"])
             lost = int(stats["interval_lost"])
-            if sent == 0 and received == 0 and lost == 0:
-                continue
-            if stats["interval_rtt_count"]:
-                rtt = "%.3f ms (médio %.3f ms)" % (
-                    stats["interval_last_rtt_ms"],
-                    stats["interval_rtt_sum_ms"] / stats["interval_rtt_count"],
-                )
-            else:
-                rtt = "sem respostas neste intervalo"
-            _logger.info(
-                "[PING 5s] %s -> %s | Enviados: %d | Recebidos: %d | "
-                "Perdidos: %d | RTT: %s",
-                session[0], session[1], sent, received, lost, rtt,
-            )
+            if sent or received or lost:
+                pair = interval.setdefault((src, dst), {
+                    "sent": 0, "received": 0, "lost": 0,
+                    "rtt_sum_ms": 0.0, "rtt_count": 0, "last_rtt_ms": -1.0,
+                })
+                pair["sent"] += sent
+                pair["received"] += received
+                pair["lost"] += lost
+                pair["rtt_sum_ms"] += stats["interval_rtt_sum_ms"]
+                pair["rtt_count"] += stats["interval_rtt_count"]
+                if stats["interval_last_rtt_ms"] >= 0:
+                    pair["last_rtt_ms"] = stats["interval_last_rtt_ms"]
+
             stats["interval_sent"] = 0
             stats["interval_received"] = 0
             stats["interval_lost"] = 0
             stats["interval_rtt_sum_ms"] = 0.0
             stats["interval_rtt_count"] = 0
             stats["interval_last_rtt_ms"] = -1.0
+        return interval
 
     def _datapath_for_ip(self, ip: str) -> Any | None:
         """Encontra o switch ao qual o host está conectado."""
