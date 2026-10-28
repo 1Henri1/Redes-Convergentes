@@ -30,15 +30,23 @@ python run_controller.py
 
 Deve aparecer o banner com os parâmetros. Mantenha esse terminal aberto.
 
-### Terminal 2: rede virtual (Mininet)
+### Terminal 2: rede virtual com parâmetros realistas
 
-O Mininet exige `sudo`. Ele não precisa do ambiente virtual.
+Use o novo iniciador de rede. Ele aplica largura de banda, atraso, jitter e fila limitada com `TCLink`; o controlador deve estar rodando no terminal 1.
 
 ```bash
-sudo mn --topo single,4 \
-    --switch ovs,protocols=OpenFlow13 \
-    --controller=remote,ip=127.0.0.1,port=6653
+sudo python3 tools/run_mininet.py
 ```
+
+Parâmetros padrão por enlace: **10 Mbps**, **5 ms de atraso**, **1 ms de jitter**, fila de **100 pacotes** e **0% de perda artificial**. A perda pode ocorrer naturalmente quando as filas ficam cheias. O script também inicia uma sonda ICMP de h1 para h4 e imprime periodicamente pacotes enviados, recebidos, perdidos, percentual de perda e RTT médio.
+
+Para alterar os parâmetros:
+
+```bash
+sudo python3 tools/run_mininet.py --bw 10 --delay 5ms --jitter 1ms --queue 100 --loss 0
+```
+
+`--loss` é opcional e adiciona perda artificial; mantenha em `0` para medir perdas causadas por congestionamento. O resumo ICMP é uma medição de conectividade entre h1 e h4, não uma contagem de todos os pacotes da rede. A sonda gera tráfego adicional e aparece nas métricas do controlador.
 
 ### Teste básico (dentro do prompt `mininet>`)
 
@@ -47,13 +55,13 @@ pingall
 h1 ping -c 5 h2
 ```
 
-Execute `pingall` primeiro para o controlador aprender o IP dos hosts.
+O script executa `pingall` ao iniciar para aquecer o aprendizado dos hosts.
 
 ---
 
 ## 3. Métricas e testes de detecção
 
- O controlador utiliza duas métricas por par IP origem-destino:
+O controlador utiliza duas métricas por par IP origem-destino:
 - **PPS:** pacotes por segundo.
 - **bytes/s:** volume de dados transmitidos por segundo, calculado a partir dos bytes observados.
 
