@@ -84,16 +84,16 @@ def main() -> int:
     )
 
     try:
-        info("*** Iniciando rede Mininet com enlaces TC configurados\\n")
+        info("*** Iniciando rede Mininet com enlaces TC configurados\n")
         info(
             f"*** Parâmetros: bw={args.bw:g} Mbps, delay={args.delay}, "
             f"jitter={args.jitter}, fila={args.queue} pacotes, "
-            f"perda artificial={args.loss:g}%\\n"
+            f"perda artificial={args.loss:g}%\n"
         )
         net.start()
         time.sleep(1)
-        info("*** Rede pronta. Nenhum ping automático será executado.\\n")
-        info("*** Envie pings manualmente no prompt mininet>, por exemplo: h1 ping -c 10 h4\\n")
+        info("*** Rede pronta. Nenhum ping automático será executado.\n")
+        info("*** Envie pings manualmente no prompt mininet>, por exemplo: h1 ping -c 10 h4\n")
         CLI(net)
     except KeyboardInterrupt:
         pass
