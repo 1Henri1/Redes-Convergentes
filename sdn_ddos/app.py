@@ -190,7 +190,7 @@ class SdnDdosController(app_manager.OSKenApp):
 
             datapath = self._datapath_for_ip(src)
             if datapath is not None:
-                self._process_pair_rate(datapath, src, dst, rate)
+                self._process_pair_rate(datapath, src, dst, rate, icmp_interval.get((src, dst)))
 
         pps_limits = self._detector.global_limits()
         if pps_limits is not None:
@@ -301,13 +301,17 @@ class SdnDdosController(app_manager.OSKenApp):
                     return datapath
         return None
 
-    def _process_pair_rate(self, datapath: Any, src: str, dst: str, rate: Any) -> None:
+    def _process_pair_rate(
+        self, datapath: Any, src: str, dst: str, rate: Any,
+        icmp_stats: Dict[str, float] | None = None,
+    ) -> None:
         """Avalia a taxa do par, mas mantém a mitigação no IP de origem."""
         pair_id = "{}->{}".format(src, dst)
         pps_detection = self._detector.evaluate(pair_id, rate.pps)
         bps_detection = self._bps_detector.evaluate(pair_id, rate.bps, minimum_rate=0.0)
         self._reporter.pair_result(
-            src, dst, rate, pps_detection, bps_detection, self._config.required_anomalies
+            src, dst, rate, pps_detection, bps_detection,
+            self._config.required_anomalies, icmp_stats,
         )
         self._handle_detection(datapath, src, pair_id, pps_detection, "PPS", bps_detection, "bytes/s")
 
