@@ -58,7 +58,8 @@ class ConsoleReporter:
 
     def pair_result(
         self, src: str, dst: str, rate: PortRate,
-        pps_detection: Detection, bps_detection: Detection, required: int
+        pps_detection: Detection, bps_detection: Detection, required: int,
+        icmp_stats: Optional[dict] = None,
     ) -> None:
         """Registra tráfego e os resultados de PPS e bytes/s em uma única linha."""
         def status(detection: Detection) -> str:
@@ -68,11 +69,27 @@ class ConsoleReporter:
                 return "ANOMALIA %s/%s" % (detection.consecutive_anomalies, required)
             return "NORMAL"
 
+        ping_info = ""
+        if icmp_stats is not None:
+            if icmp_stats["rtt_count"]:
+                rtt_info = "%.3f ms (médio %.3f ms)" % (
+                    icmp_stats["last_rtt_ms"],
+                    icmp_stats["rtt_sum_ms"] / icmp_stats["rtt_count"],
+                )
+            else:
+                rtt_info = "sem respostas"
+            ping_info = (
+                " | ICMP enviados: %d | recebidos: %d | perdidos: %d | RTT: %s"
+                % (
+                    icmp_stats["sent"], icmp_stats["received"],
+                    icmp_stats["lost"], rtt_info,
+                )
+            )
         self._log.info(
             "[TRÁFEGO/ANÁLISE] Origem: %-15s | Destino: %-15s | "
-            "PPS: %6.2f (%s) | bytes/s: %10.2f (%s) | Pkts: %-4s",
+            "PPS: %6.2f (%s) | bytes/s: %10.2f (%s) | Pkts: %-4s%s",
             src, dst, rate.pps, status(pps_detection), rate.bps,
-            status(bps_detection), rate.delta_packets,
+            status(bps_detection), rate.delta_packets, ping_info,
         )
 
     def blocked_traffic(self, src: str, dst: str, rate: PortRate) -> None:
