@@ -46,7 +46,7 @@ O script **não inicia pings automáticos** nem executa `pingall`. No prompt `mi
 h1 ping -c 10 h4
 ```
 
-O primeiro terminal (controlador) mostra, para os pings observados, os pacotes enviados, recebidos, perdidos e o RTT observado/médio. Uma solicitação sem resposta é contabilizada como perdida após pelo menos 2 segundos, na próxima coleta do controlador. Essa medição é feita no controlador e pode incluir sobrecarga de processamento, portanto o RTT exibido pelo próprio comando `ping` é a referência de latência fim a fim. Para alterar os parâmetros:
+A cada **5 segundos**, o primeiro terminal (controlador) apresenta um resumo dos pings observados nesse intervalo: total de pacotes enviados, recebidos e perdidos, além do RTT observado e médio das respostas recebidas. Os contadores são zerados após cada resumo, então cada linha representa somente o intervalo correspondente. Uma solicitação sem resposta é contabilizada como perdida após pelo menos 2 segundos, na próxima coleta do controlador. Essa medição é feita no controlador e pode incluir sobrecarga de processamento, portanto o RTT exibido pelo próprio comando `ping` é a referência de latência fim a fim. Para alterar os parâmetros:
 
 ```bash
 sudo python3 tools/run_mininet.py --bw 10 --delay 20us --jitter 0us --queue 100 --loss 0
