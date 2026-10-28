@@ -59,11 +59,10 @@ No primeiro terminal, o controlador deixa de exibir um par origem-destino quando
 ### Teste básico (dentro do prompt `mininet>`)
 
 ```text
-pingall
 h1 ping -c 5 h2
 ```
 
-O script executa `pingall` ao iniciar para aquecer o aprendizado dos hosts.
+Não há tráfego de teste automático. O primeiro ping manual também permite ao switch aprender os endereços MAC/IP necessários.
 
 ---
 
@@ -77,7 +76,7 @@ Cada métrica tem seu próprio detector estatístico, com baseline global inicia
 
 **Gerador de tráfego:** `tools/generate_traffic.py` gera tráfego TCP ou UDP para testar o monitoramento de PPS e bytes/s. Embora possa abrir várias conexões ou sockets, o controlador não usa a quantidade de fluxos como métrica de detecção. O tamanho e o intervalo dos envios influenciam o volume observado; os resultados reais dependem do comportamento do sistema e devem ser conferidos nos logs do controlador.
 
-Execute `pingall` antes dos testes para o controlador aprender os hosts. Durante a calibração, gere tráfego normal e aguarde aparecerem os limites globais no log. Os comandos abaixo assumem a topologia `single,4` (h1–h4) e que o repositório está acessível no sistema de arquivos da VM.
+Inicie os testes com um ping manual para o controlador aprender os hosts. Durante a calibração, gere tráfego normal e aguarde aparecerem os limites globais no log. Os comandos abaixo assumem a topologia `single,4` (h1–h4) e que o repositório está acessível no sistema de arquivos da VM.
 
 ### Tráfego normal
 
