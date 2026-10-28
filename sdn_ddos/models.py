@@ -20,12 +20,12 @@ class PortRate:
     delta_packets: int
     delta_bytes: int
     pps: float
-    bps: float  # bits por segundo
+    bps: float  # bytes por segundo; nome legado, não é bits/s
 
 
 @dataclass(frozen=True)
 class Detection:
-    """Veredito do detector para uma amostra de taxa (PPS ou bits/s).
+    """Veredito do detector para uma amostra de taxa (PPS ou bytes/s).
 
     ``mean``, ``std`` e ``limit`` só são preenchidos depois que a linha de
     base está formada.
