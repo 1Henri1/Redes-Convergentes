@@ -35,8 +35,8 @@ class SingleSwitchTopo(Topo):
     def build(
         self,
         bw: float = 10.0,
-        delay: str = "20ms",
-        jitter: str = "1ms",
+        delay: str = "0.02ms",
+        jitter: str = "0.001ms",
         queue_size: int = 100,
         loss: float = 0.0,
     ) -> None:
