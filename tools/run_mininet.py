@@ -3,9 +3,6 @@
 
 Execute com sudo, enquanto o controlador OS-Ken estiver rodando:
     sudo python3 tools/run_mininet.py
-
-Não há ping automático. Envie pings manualmente no prompt mininet>; as métricas
-ICMP são exibidas pelo controlador no primeiro terminal.
 """
 from __future__ import annotations
 
@@ -21,11 +18,11 @@ from mininet.topo import Topo
 
 
 class SingleSwitchTopo(Topo):
-    """Quatro hosts num switch, com parâmetros TC aplicados a cada enlace."""
+    """10 hosts num switch, com parâmetros TC aplicados a cada enlace."""
 
     def build(
         self,
-        bw: float = 0.1,
+        bw: float = 1.0,
         delay: str = "100us",
         jitter: str = "0us",
         queue_size: int = 100,
@@ -50,11 +47,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--controller-ip", default="127.0.0.1")
     parser.add_argument("--controller-port", type=int, default=6653)
-    parser.add_argument("--bw", type=float, default=0.1, help="largura de banda por enlace (Mbps)")
-    parser.add_argument("--delay", default="100us", help="atraso por enlace; 20us visa RTT teórico de 0,08ms entre h1 e h4")
-    parser.add_argument("--jitter", default="0us", help="variação de atraso (padrão: 0us)")
+    parser.add_argument("--bw", type=float, default=1, help="largura de banda por enlace (Mbps)")
+    parser.add_argument("--delay", default="100us", help="atraso por enlace; 100us visa RTT teórico de 0,4ms entre h1 e h4")
+    parser.add_argument("--jitter", default=0, help="variação de atraso (padrão: 0us)")
     parser.add_argument("--queue", type=int, default=100, help="tamanho máximo da fila em pacotes")
-    parser.add_argument("--loss", type=float, default=0.0, help="perda artificial em %% (padrão: 0)")
+    parser.add_argument("--loss", type=float, default=0, help="perda artificial em %% (padrão: 0)")
     args = parser.parse_args()
 
     if args.bw <= 0 or args.queue < 1:
@@ -92,7 +89,6 @@ def main() -> int:
         )
         net.start()
         time.sleep(1)
-        info("*** Rede pronta. Nenhum ping automático será executado.\n")
         info("*** Envie pings manualmente no prompt mininet>, por exemplo: h1 ping -c 10 h4\n")
         CLI(net)
     except KeyboardInterrupt:
