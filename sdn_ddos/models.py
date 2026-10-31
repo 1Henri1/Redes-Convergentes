@@ -20,7 +20,7 @@ class PortRate:
     delta_packets: int
     delta_bytes: int
     pps: float
-    bps: float  # bytes por segundo; nome legado, não é bits/s
+    bps: float  
 
 
 @dataclass(frozen=True)

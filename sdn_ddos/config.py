@@ -36,7 +36,7 @@ class DetectorConfig:
     history_size: int = 20
     threshold_factor: float = 3.0
     min_rate_factor: float = 1.5
-    minimum_pps: float = 2.0
+    minimum_pps: float = 10.0
     required_anomalies: int = 2
     block_time: int = 30
     summary_every_cycles: int = 6
