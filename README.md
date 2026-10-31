@@ -38,7 +38,7 @@ Use o novo iniciador de rede. Ele aplica largura de banda, atraso, jitter e fila
 sudo python3 tools/run_mininet.py
 ```
 
-Parâmetros padrão por enlace: **10 Mbps**, **20 µs de atraso**, **0 µs de jitter**, fila de **100 pacotes** e **0% de perda artificial**. O caminho h1→h4 e a resposta atravessam quatro enlaces no total, portanto o atraso configurado contribui com cerca de **0,08 ms (80 µs) de RTT teórico**. O RTT real medido pode ser maior por causa do processamento do Linux, Mininet, Open vSwitch e controlador; esse valor é um alvo de configuração, não uma garantia.
+Parâmetros padrão por enlace: **1 Mbps**, **100 µs de atraso**, **0 µs de jitter**, fila de **100 pacotes** e **0% de perda artificial**. O caminho h1→h4 e a resposta atravessam quatro enlaces no total, portanto o atraso configurado contribui com cerca de **0,4 ms (400 µs) de RTT teórico**. O RTT real medido pode ser maior por causa do processamento do Linux, Mininet, Open vSwitch e controlador; esse valor é um alvo de configuração, não uma garantia.
 
 O script **não inicia pings automáticos** nem executa `pingall`. No prompt `mininet>`, envie manualmente, por exemplo:
 
@@ -49,7 +49,7 @@ h1 ping -c 10 h4
 A cada **5 segundos**, as métricas dos pings manuais observados pelo switch aparecem na própria linha `[TRÁFEGO/ANÁLISE]` do respectivo par origem-destino: enviados, recebidos, perdidos e RTT (último e médio). Os contadores são zerados após cada intervalo. Uma solicitação sem resposta é contabilizada como perdida após pelo menos 2 segundos, na próxima coleta do controlador. Essa medição é feita no controlador e pode incluir sobrecarga de processamento, portanto o RTT exibido pelo próprio comando `ping` é a referência de latência fim a fim. Para alterar os parâmetros:
 
 ```bash
-sudo python3 tools/run_mininet.py --bw 10 --delay 20us --jitter 0us --queue 100 --loss 0
+sudo python3 tools/run_mininet.py --bw 1 --delay 100us --jitter 0us --queue 100 --loss 0
 ```
 
 `--loss` adiciona perda artificial; mantenha em `0` para medir perdas causadas por congestionamento. O controlador deixa de exibir um par origem-destino quando ele registra **zero pacotes em duas coletas consecutivas**. Com o intervalo padrão de 5 segundos, isso corresponde a aproximadamente 10 segundos sem pacotes; quando o tráfego voltar, o par reaparece após uma nova coleta inicial.
