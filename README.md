@@ -49,7 +49,7 @@ h1 ping -c 10 h4
 A cada **5 segundos**, as métricas dos pings manuais observados pelo switch aparecem na própria linha `[TRÁFEGO/ANÁLISE]` do respectivo par origem-destino: enviados, recebidos, perdidos e RTT (último e médio). Os contadores são zerados após cada intervalo. Uma solicitação sem resposta é contabilizada como perdida após pelo menos 2 segundos, na próxima coleta do controlador. Essa medição é feita no controlador e pode incluir sobrecarga de processamento, portanto o RTT exibido pelo próprio comando `ping` é a referência de latência fim a fim. Para alterar os parâmetros:
 
 ```bash
-sudo python3 tools/run_mininet.py --bw 1 --delay 100us --jitter 0us --queue 100 --loss 0
+sudo python3 tools/run_mininet.py --bw 0.1 --delay 100us --jitter 0us --queue 100 --loss 0
 ```
 
 `--loss` adiciona perda artificial; mantenha em `0` para medir perdas causadas por congestionamento. O controlador deixa de exibir um par origem-destino quando ele registra **zero pacotes em duas coletas consecutivas**. Com o intervalo padrão de 5 segundos, isso corresponde a aproximadamente 10 segundos sem pacotes; quando o tráfego voltar, o par reaparece após uma nova coleta inicial.
