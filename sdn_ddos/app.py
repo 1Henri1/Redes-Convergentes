@@ -37,7 +37,6 @@ from .traffic_meter import PortRateCalculator
 
 _logger = logging.getLogger(LOGGER_NAME)
 
-
 class SdnDdosController(app_manager.OSKenApp):
     """Learning switch com detecção estatística de DDoS e bloqueio temporário."""
 

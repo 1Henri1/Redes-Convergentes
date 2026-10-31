@@ -22,7 +22,7 @@ class SingleSwitchTopo(Topo):
 
     def build(
         self,
-        bw: float = 1.0,
+        bw: float = 0.1,
         delay: str = "100us",
         jitter: str = "0us",
         queue_size: int = 100,
@@ -47,7 +47,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--controller-ip", default="127.0.0.1")
     parser.add_argument("--controller-port", type=int, default=6653)
-    parser.add_argument("--bw", type=float, default=1, help="largura de banda por enlace (Mbps)")
+    parser.add_argument("--bw", type=float, default=0.1, help="largura de banda por enlace (Mbps)")
     parser.add_argument("--delay", default="100us", help="atraso por enlace; 100us visa RTT teórico de 0,4ms entre h1 e h4")
     parser.add_argument("--jitter", default=0, help="variação de atraso (padrão: 0us)")
     parser.add_argument("--queue", type=int, default=100, help="tamanho máximo da fila em pacotes")
