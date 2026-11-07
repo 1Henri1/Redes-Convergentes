@@ -38,6 +38,8 @@ class PingScenario:
 
         destination_ip = self.net.get(destination).IP()
         with self._lock:
+            if self._stop_event.is_set():
+                return
             if group in self._groups:
                 raise ValueError(f"O grupo '{group}' já existe.")
             processes = []
@@ -69,7 +71,8 @@ class PingScenario:
         if seconds < 0:
             raise ValueError("A pausa não pode ser negativa.")
         print(f"[PING TESTE] Aguardando {seconds:g} segundos...", flush=True)
-        self._stop_event.wait(seconds)
+        if self._stop_event.wait(seconds):
+            raise InterruptedError("Execução do cenário interrompida.")
 
     def stop_pings(self, group: str) -> None:
         """Interrompe somente os processos pertencentes ao grupo informado."""
@@ -145,6 +148,8 @@ class PingScenario:
     def _run(self) -> None:
         try:
             self.main()
+        except InterruptedError:
+            print("[PING TESTE] Cenário interrompido.", flush=True)
         except Exception as error:
             print(f"[PING TESTE] Erro no cenário: {error}", flush=True)
         finally:
