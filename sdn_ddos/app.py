@@ -27,7 +27,7 @@ from os_ken.ofproto import ofproto_v1_3
 
 from .blocklist import BlockList
 from .config import DetectorConfig
-from .detector import AnomalyDetector
+from .detector import AnomalyDetector, DestinationPpsDetector
 from .flow_manager import FlowManager
 from .host_table import HostTable
 from .logging_setup import LOGGER_NAME, configure_logging
@@ -49,8 +49,13 @@ class SdnDdosController(app_manager.OSKenApp):
         self._config = DetectorConfig.from_env()
         self._hosts = HostTable()
         self._rates = PortRateCalculator()
-        self._detector = AnomalyDetector(self._config)
         self._bps_detector = AnomalyDetector(self._config)
+        # Cada servidor mantém sua própria baseline de PPS agregado recebido.
+        self._destination_detectors: Dict[str, DestinationPpsDetector] = {}
+        # Ciclo em que cada par origem-destino começou a aparecer.
+        self._pair_first_seen_cycle: Dict[tuple[str, str], int] = {}
+        self._destination_anomaly_start: Dict[str, int] = {}
+        self._destination_candidates: Dict[str, set[str]] = {}
         self._blocklist = BlockList(self._config.block_time)
         self._flows = FlowManager()
         self._reporter = ConsoleReporter()
@@ -169,17 +174,19 @@ class SdnDdosController(app_manager.OSKenApp):
             hub.sleep(self._config.monitor_interval)
 
     def _run_monitor_cycle(self, cycle: int) -> None:
-        """Executa um ciclo: expira bloqueios e pedidos ICMP, coleta taxas e resume."""
+        """Coleta taxas, avalia PPS agregado por destino e expira bloqueios."""
         self._expire_icmp_requests()
         icmp_interval = self._report_icmp_interval()
         for ip in self._blocklist.pop_expired():
             self._reporter.block_expired(ip)
 
-        # Avalia cada par separadamente; anomalia confirmada bloqueia a origem.
-        for (src, dst), rate in self._rates.collect_rates().items():
+        rates = self._rates.collect_rates()
+        active_rates: Dict[tuple[str, str], Any] = {}
+
+        # Primeiro processa os pares e preserva a telemetria individual.
+        for (src, dst), rate in rates.items():
             src_blocked = self._blocklist.is_blocked(src)
             dst_blocked = self._blocklist.is_blocked(dst)
-
             if src_blocked:
                 self._reporter.blocked_traffic(src, dst, rate)
             if dst_blocked:
@@ -187,16 +194,62 @@ class SdnDdosController(app_manager.OSKenApp):
             if src_blocked or dst_blocked:
                 continue
 
+            active_rates[(src, dst)] = rate
+            self._pair_first_seen_cycle.setdefault((src, dst), cycle)
             datapath = self._datapath_for_ip(src)
             if datapath is not None:
-                self._process_pair_rate(datapath, src, dst, rate, icmp_interval.get((src, dst)))
+                self._process_pair_rate(
+                    datapath, src, dst, rate, icmp_interval.get((src, dst))
+                )
 
-        pps_limits = self._detector.global_limits()
-        if pps_limits is not None:
-            self._reporter.global_limits("PPS", *pps_limits)
-        bps_limits = self._bps_detector.global_limits(minimum_rate=0.0)
-        if bps_limits is not None:
-            self._reporter.global_limits("bytes/s", *bps_limits)
+        # Inclui também destinos conhecidos sem tráfego nesta janela:
+        # assim uma janela sem pacotes é registrada como PPS = 0.
+        destinations = {dst for (_src, dst) in active_rates}
+        for dpid in self._datapaths:
+            destinations.update(self._hosts.ips_for_switch(dpid))
+        destinations.update(self._destination_detectors)
+
+        for dst in destinations:
+            if self._blocklist.is_blocked(dst):
+                continue
+            total_pps = sum(
+                rate.pps for (_src, target), rate in active_rates.items()
+                if target == dst
+            )
+            detector = self._destination_detectors.setdefault(
+                dst, DestinationPpsDetector(self._config)
+            )
+            detection = detector.evaluate(total_pps)
+            self._reporter.destination_result(
+                dst, total_pps, detection, self._config.required_anomalies
+            )
+
+            if detection.status is DetectionStatus.ANOMALY:
+                start_cycle = self._destination_anomaly_start.setdefault(dst, cycle)
+                candidates = self._destination_candidates.setdefault(dst, set())
+                # Só considera origens que começaram a contribuir na janela
+                # em que a anomalia apareceu. Emissores estáveis anteriores
+                # não são bloqueados apenas por enviarem muito PPS.
+                for (src, target), _rate in active_rates.items():
+                    if target == dst and self._pair_first_seen_cycle.get((src, dst), cycle) >= start_cycle:
+                        candidates.add(src)
+
+                if detection.should_block:
+                    blocked_any = False
+                    for src in sorted(candidates):
+                        if self._blocklist.is_blocked(src):
+                            continue
+                        datapath = self._datapath_for_ip(src)
+                        if datapath is not None:
+                            self._block(datapath, src)
+                            blocked_any = True
+                    if not blocked_any:
+                        self._reporter.destination_without_attribution(dst)
+                    self._destination_anomaly_start.pop(dst, None)
+                    self._destination_candidates.pop(dst, None)
+            else:
+                self._destination_anomaly_start.pop(dst, None)
+                self._destination_candidates.pop(dst, None)
 
         every = self._config.summary_every_cycles
         if every and cycle > 0 and cycle % every == 0:
@@ -306,33 +359,20 @@ class SdnDdosController(app_manager.OSKenApp):
         self, datapath: Any, src: str, dst: str, rate: Any,
         icmp_stats: Dict[str, float] | None = None,
     ) -> None:
-        """Avalia a taxa do par, mas mantém a mitigação no IP de origem."""
+        """Exibe PPS por par e mantém a análise auxiliar de bytes/s."""
         pair_id = "{}->{}".format(src, dst)
-        pps_detection = self._detector.evaluate(pair_id, rate.pps)
-        bps_detection = self._bps_detector.evaluate(pair_id, rate.bps, minimum_rate=0.0)
+        bps_detection = self._bps_detector.evaluate(
+            pair_id, rate.bps, minimum_rate=0.0
+        )
         self._reporter.pair_result(
-            src, dst, rate, pps_detection, bps_detection,
+            src, dst, rate, bps_detection,
             self._config.required_anomalies, icmp_stats,
         )
-        self._handle_detection(datapath, src, pair_id, pps_detection, "PPS", bps_detection, "bytes/s")
-
-    def _handle_detection(
-        self, datapath: Any, src: str, pair_id: str,
-        first: Detection, first_metric: str,
-        second: Detection, second_metric: str,
-    ) -> None:
-        """Registra anomalias de PPS/BPS e bloqueia a origem se alguma persistir."""
-        should_block = False
-        for detection, metric in ((first, first_metric), (second, second_metric)):
-            if detection.status is not DetectionStatus.ANOMALY:
-                continue
+        if bps_detection.status is DetectionStatus.ANOMALY:
             self._stats.detections += 1
             self._reporter.anomaly(
-                pair_id, detection, self._config.required_anomalies, metric
+                pair_id, bps_detection, self._config.required_anomalies, "bytes/s"
             )
-            should_block = should_block or detection.should_block
-        if should_block:
-            self._block(datapath, src)
 
     def _block(self, datapath: Any, ip: str) -> None:
         """Aplica o bloqueio no switch e o registra no controlador."""
