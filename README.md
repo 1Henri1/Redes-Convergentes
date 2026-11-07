@@ -82,6 +82,46 @@ A métrica bytes/s continua sendo monitorada por par e exibida como sinal auxili
 
 Inicie os testes com um ping manual para o controlador aprender os hosts. Durante a calibração, mantenha tráfego normal e aguarde a formação da baseline individual de cada destino e a exibição de seus limites no log. Os comandos abaixo assumem a topologia `single,4` (h1–h4) e que o repositório está acessível no sistema de arquivos da VM.
 
+
+### Cenário automático: tráfego normal seguido de sobrecarga por ping
+
+O cenário é opcional e só é executado quando `--auto-ping-test` é informado. Inicie primeiro o controlador no terminal 1 e depois, no terminal 2:
+
+```bash
+sudo python3 tools/run_mininet.py --auto-ping-test
+```
+
+Com a topologia padrão de dez hosts, o teste ocorre em duas fases:
+
+1. **Tráfego normal (20 s):** `h1` e `h2` enviam pings a cada 1 segundo para `h10`.
+2. **Sobrecarga (30 s):** `h1` e `h2` continuam ativos, enquanto `h3`, `h4`, `h5` e `h6` começam a enviar pings a cada 50 ms para o mesmo destino.
+3. **Encerramento:** os processos de ping são interrompidos. A CLI do Mininet continua disponível para inspeção manual.
+
+O cenário roda em segundo plano, então o prompt `mininet>` permanece disponível. Acompanhe as métricas no terminal do controlador. Para encerrar antes do fim, digite `exit` na CLI ou interrompa o iniciador; os processos de ping são encerrados junto com a rede.
+
+#### Personalizar
+
+```bash
+sudo python3 tools/run_mininet.py --auto-ping-test \\
+  --destination h10 \\
+  --legitimate-sources h1,h2 \\
+  --attack-sources h3,h4,h5,h6 \\
+  --normal-duration 20 \\
+  --attack-duration 30 \\
+  --legitimate-interval 1.0 \\
+  --attack-interval 0.05
+```
+
+- `--destination`: servidor que receberá os pings.
+- `--legitimate-sources`: origens que começam na fase normal e continuam durante a sobrecarga.
+- `--attack-sources`: origens adicionais iniciadas na segunda fase.
+- `--normal-duration` e `--attack-duration`: duração de cada fase, em segundos.
+- `--legitimate-interval` e `--attack-interval`: intervalo entre pings, em segundos.
+
+Para usar somente comandos manuais, execute sem `--auto-ping-test`.
+
+**Observações:** trata-se de um gerador de carga ICMP simples para a topologia Mininet local, não de uma ferramenta de ataque real. A taxa observada depende da largura de banda, da fila e da capacidade da VM. Se o enlace saturar antes de a baseline ser formada, aumente `--bw`, reduza o número de origens ou aumente `--attack-interval`. Mantenha os testes restritos ao ambiente controlado.
+
 ### Tráfego normal
 
 ```text
