@@ -9,6 +9,8 @@ from __future__ import annotations
 import argparse
 import time
 
+from ping_scenario import PingScenario
+
 from mininet.cli import CLI
 from mininet.link import TCLink
 from mininet.log import setLogLevel, info
@@ -52,12 +54,22 @@ def main() -> int:
     parser.add_argument("--jitter", default=0, help="variação de atraso (padrão: 0us)")
     parser.add_argument("--queue", type=int, default=100, help="tamanho máximo da fila em pacotes")
     parser.add_argument("--loss", type=float, default=0, help="perda artificial em %% (padrão: 0)")
+    parser.add_argument("--auto-ping-test", action="store_true", help="executa tráfego normal seguido de sobrecarga por ping")
+    parser.add_argument("--destination", default="h10", help="destino dos pings automáticos")
+    parser.add_argument("--legitimate-sources", default="h1,h2", help="origens legítimas separadas por vírgula")
+    parser.add_argument("--attack-sources", default="h3,h4,h5,h6", help="origens adicionais da fase de sobrecarga")
+    parser.add_argument("--normal-duration", type=float, default=20.0, help="duração da fase normal em segundos")
+    parser.add_argument("--attack-duration", type=float, default=30.0, help="duração da fase de sobrecarga em segundos")
+    parser.add_argument("--legitimate-interval", type=float, default=1.0, help="intervalo dos pings legítimos em segundos")
+    parser.add_argument("--attack-interval", type=float, default=0.05, help="intervalo dos pings de sobrecarga em segundos")
     args = parser.parse_args()
 
     if args.bw <= 0 or args.queue < 1:
         parser.error("--bw deve ser > 0 e --queue deve ser >= 1")
     if not 0 <= args.loss <= 100:
         parser.error("--loss deve estar entre 0 e 100")
+    if min(args.normal_duration, args.attack_duration, args.legitimate_interval, args.attack_interval) <= 0:
+        parser.error("durações e intervalos do cenário devem ser positivos")
     topo = SingleSwitchTopo(
         bw=args.bw,
         delay=args.delay,
@@ -80,6 +92,7 @@ def main() -> int:
         port=args.controller_port,
     )
 
+    scenario = None
     try:
         info("*** Iniciando rede Mininet com enlaces TC configurados\n")
         info(
@@ -89,11 +102,26 @@ def main() -> int:
         )
         net.start()
         time.sleep(1)
-        info("*** Envie pings manualmente no prompt mininet>, por exemplo: h1 ping -c 10 h4\n")
+        if args.auto_ping_test:
+            scenario = PingScenario(
+                destination=args.destination,
+                legitimate_sources=tuple(x.strip() for x in args.legitimate_sources.split(",") if x.strip()),
+                attack_sources=tuple(x.strip() for x in args.attack_sources.split(",") if x.strip()),
+                normal_duration=args.normal_duration,
+                attack_duration=args.attack_duration,
+                legitimate_interval=args.legitimate_interval,
+                attack_interval=args.attack_interval,
+            )
+            scenario.start(net)
+            info("*** Cenário automático iniciado; acompanhe o terminal do controlador.\n")
+        else:
+            info("*** Envie pings manualmente no prompt mininet>, por exemplo: h1 ping -c 10 h4\n")
         CLI(net)
     except KeyboardInterrupt:
         pass
     finally:
+        if scenario is not None:
+            scenario.stop()
         net.stop()
     return 0
 
