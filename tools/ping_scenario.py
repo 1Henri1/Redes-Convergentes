@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Cenário de pings em duas fases para uma rede Mininet já iniciada."""
+"""Edite o método main() para montar sequências personalizadas de pings."""
 from __future__ import annotations
 
 import subprocess
@@ -8,60 +8,78 @@ from typing import Sequence
 
 
 class PingScenario:
-    def __init__(
-        self,
-        destination: str = "h10",
-        legitimate_sources: Sequence[str] = ("h1", "h2"),
-        attack_sources: Sequence[str] = ("h3", "h4", "h5", "h6"),
-        normal_duration: float = 20.0,
-        attack_duration: float = 30.0,
-        legitimate_interval: float = 1.0,
-        attack_interval: float = 0.05,
-    ) -> None:
-        self.destination = destination
-        self.legitimate_sources = tuple(legitimate_sources)
-        self.attack_sources = tuple(attack_sources)
-        self.normal_duration = normal_duration
-        self.attack_duration = attack_duration
-        self.legitimate_interval = legitimate_interval
-        self.attack_interval = attack_interval
-        self._processes: list[subprocess.Popen] = []
-        self._lock = threading.Lock()
+    """Executa grupos de ping em paralelo dentro de uma rede Mininet."""
+
+    def __init__(self, net=None) -> None:
+        self.net = net
+        self._groups: dict[str, list[subprocess.Popen]] = {}
+        self._lock = threading.RLock()
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
-        self._net = None
 
-        if not self.legitimate_sources or not self.attack_sources:
-            raise ValueError("Informe origens legítimas e origens de sobrecarga.")
-        if set(self.legitimate_sources) & set(self.attack_sources):
-            raise ValueError("Uma máquina não pode estar nos dois grupos.")
-        if self.destination in set(self.legitimate_sources) | set(self.attack_sources):
-            raise ValueError("O destino não pode ser também uma origem.")
-        if min(normal_duration, attack_duration, legitimate_interval, attack_interval) <= 0:
-            raise ValueError("Durações e intervalos devem ser positivos.")
+    def start_pings(
+        self,
+        group: str,
+        sources: Sequence[str],
+        destination: str,
+        interval: float = 1.0,
+    ) -> None:
+        """Inicia pings contínuos; cada origem executa seu próprio processo."""
+        if self.net is None:
+            raise RuntimeError("A rede Mininet ainda não foi associada ao cenário.")
+        if not group.strip():
+            raise ValueError("Informe um nome para o grupo.")
+        if not sources:
+            raise ValueError("Informe ao menos uma origem.")
+        if interval <= 0:
+            raise ValueError("O intervalo deve ser positivo.")
+        if destination in sources:
+            raise ValueError("O destino não pode ser uma das origens.")
 
-    def _start_pings(self, sources: Sequence[str], interval: float, phase: str) -> None:
-        destination_ip = self._net.get(self.destination).IP()
+        destination_ip = self.net.get(destination).IP()
         with self._lock:
-            for source_name in sources:
-                if self._stop_event.is_set():
-                    return
-                host = self._net.get(source_name)
-                process = host.popen(
-                    ["ping", "-n", "-i", str(interval), destination_ip],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.STDOUT,
-                )
-                self._processes.append(process)
-                print(
-                    f"[PING TESTE] {phase}: {source_name} -> {self.destination} "
-                    f"({destination_ip}), intervalo={interval}s",
-                    flush=True,
-                )
+            if group in self._groups:
+                raise ValueError(f"O grupo '{group}' já existe.")
+            processes = []
+            try:
+                for source in sources:
+                    host = self.net.get(source)  # valida o host
+                    process = host.popen(
+                        ["ping", "-n", "-i", str(interval), destination_ip],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.STDOUT,
+                    )
+                    processes.append(process)
+                self._groups[group] = processes
+            except Exception:
+                for process in processes:
+                    if process.poll() is None:
+                        process.terminate()
+                        process.wait()
+                raise
 
-    def _stop_pings(self) -> None:
+        print(
+            f"[PING TESTE] Grupo '{group}' iniciado: "
+            f"{', '.join(sources)} -> {destination}, intervalo={interval}s",
+            flush=True,
+        )
+
+    def wait(self, seconds: float) -> None:
+        """Insere uma pausa na sequência sem bloquear o encerramento do cenário."""
+        if seconds < 0:
+            raise ValueError("A pausa não pode ser negativa.")
+        print(f"[PING TESTE] Aguardando {seconds:g} segundos...", flush=True)
+        self._stop_event.wait(seconds)
+
+    def stop_pings(self, group: str) -> None:
+        """Interrompe somente os processos pertencentes ao grupo informado."""
         with self._lock:
-            processes, self._processes = self._processes, []
+            processes = self._groups.pop(group, [])
+        self._terminate(processes)
+        print(f"[PING TESTE] Grupo '{group}' encerrado.", flush=True)
+
+    @staticmethod
+    def _terminate(processes: Sequence[subprocess.Popen]) -> None:
         for process in processes:
             if process.poll() is None:
                 process.terminate()
@@ -72,42 +90,69 @@ class PingScenario:
                 process.kill()
                 process.wait()
 
-    def _run_phases(self) -> None:
-        print(
-            f"[PING TESTE] Fase normal por {self.normal_duration:g}s. "
-            f"Origens: {', '.join(self.legitimate_sources)}",
-            flush=True,
-        )
-        if self._stop_event.wait(self.normal_duration):
-            return
+    def stop_all(self) -> None:
+        """Interrompe todos os grupos ainda ativos."""
+        with self._lock:
+            groups = list(self._groups.values())
+            self._groups.clear()
+        for processes in groups:
+            self._terminate(processes)
 
-        print(
-            f"[PING TESTE] INÍCIO DA SOBRECARGA por {self.attack_duration:g}s. "
-            f"Novas origens: {', '.join(self.attack_sources)}",
-            flush=True,
+    def main(self) -> None:
+        """Sequência do teste: edite este método para criar seus experimentos.
+
+        Para adicionar etapas, chame start_pings() novamente.
+        Use wait(segundos) para inserir pausas entre etapas.
+        Grupos já iniciados continuam ativos até stop_pings() ou stop_all().
+        """
+        # BLOCO 1: tráfego normal. h1 e h2 permanecem ativos.
+        self.start_pings(
+            group="normal",
+            sources=["h1", "h2"],
+            destination="h10",
+            interval=1.0,
         )
-        self._start_pings(self.attack_sources, self.attack_interval, "sobrecarga")
-        if not self._stop_event.wait(self.attack_duration):
-            print("[PING TESTE] Fim da fase de sobrecarga.", flush=True)
-        self._stop_pings()
+        self.wait(35)
+
+        # BLOCO 2: novas origens começam a enviar para o mesmo servidor.
+        self.start_pings(
+            group="sobrecarga",
+            sources=["h3", "h4", "h5", "h6"],
+            destination="h10",
+            interval=0.1,
+        )
+        self.wait(30)
+
+        # Exemplo de pausa entre etapas:
+        # self.wait(5)
+        #
+        # Exemplo de um terceiro bloco, mantendo os grupos anteriores ativos:
+        # self.start_pings("bloco_3", ["h7", "h8"], "h10", interval=0.05)
+        # self.wait(20)
+
+        # Encerra todos os pings ao final da sequência.
+        self.stop_all()
 
     def start(self, net) -> None:
+        """Executa main() em segundo plano para manter a CLI do Mininet disponível."""
         if self._thread and self._thread.is_alive():
             raise RuntimeError("O cenário já está em execução.")
-        self._net = net
-        for host_name in {
-            self.destination, *self.legitimate_sources, *self.attack_sources
-        }:
-            net.get(host_name)  # valida os nomes na topologia
+        self.net = net
         self._stop_event.clear()
-        self._start_pings(
-            self.legitimate_sources, self.legitimate_interval, "tráfego normal"
-        )
-        self._thread = threading.Thread(target=self._run_phases, daemon=True)
+        self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
+    def _run(self) -> None:
+        try:
+            self.main()
+        except Exception as error:
+            print(f"[PING TESTE] Erro no cenário: {error}", flush=True)
+        finally:
+            self.stop_all()
+
     def stop(self) -> None:
+        """Interrompe pausas e encerra todos os pings, inclusive ao fechar o Mininet."""
         self._stop_event.set()
-        self._stop_pings()
+        self.stop_all()
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=3)
