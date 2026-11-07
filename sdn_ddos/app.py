@@ -54,6 +54,7 @@ class SdnDdosController(app_manager.OSKenApp):
         self._destination_detectors: Dict[str, DestinationPpsDetector] = {}
         # Ciclo em que cada par origem-destino começou a aparecer.
         self._pair_first_seen_cycle: Dict[tuple[str, str], int] = {}
+        self._pair_last_seen_cycle: Dict[tuple[str, str], int] = {}
         self._destination_anomaly_start: Dict[str, int] = {}
         self._destination_candidates: Dict[str, set[str]] = {}
         self._blocklist = BlockList(self._config.block_time)
@@ -95,8 +96,17 @@ class SdnDdosController(app_manager.OSKenApp):
             del self._datapaths[datapath.id]
             # Contadores e portas podem mudar quando o switch reconectar;
             # manter o estado antigo geraria taxas e IPs incorretos.
+            disconnected_ips = self._hosts.ips_for_switch(datapath.id)
+            for ip in disconnected_ips:
+                self._destination_detectors.pop(ip, None)
+                self._destination_anomaly_start.pop(ip, None)
+                self._destination_candidates.pop(ip, None)
+            for pair in list(self._pair_first_seen_cycle):
+                if pair[0] in disconnected_ips or pair[1] in disconnected_ips:
+                    self._pair_first_seen_cycle.pop(pair, None)
+                    self._pair_last_seen_cycle.pop(pair, None)
             self._hosts.forget_switch(datapath.id)
-            self._rates.forget_switch(datapath.id)
+            self._rates.forget_ips(disconnected_ips)
             self._reporter.switch_disconnected(datapath.id)
 
     # ==================================================================
@@ -195,7 +205,13 @@ class SdnDdosController(app_manager.OSKenApp):
                 continue
 
             active_rates[(src, dst)] = rate
-            self._pair_first_seen_cycle.setdefault((src, dst), cycle)
+            pair = (src, dst)
+            last_seen = self._pair_last_seen_cycle.get(pair)
+            # Se o par ficou ausente por mais de duas janelas, considera-se
+            # uma nova aparição (o medidor remove pares após duas janelas zeradas).
+            if last_seen is None or cycle - last_seen > 2:
+                self._pair_first_seen_cycle[pair] = cycle
+            self._pair_last_seen_cycle[pair] = cycle
             datapath = self._datapath_for_ip(src)
             if datapath is not None:
                 self._process_pair_rate(
@@ -209,7 +225,7 @@ class SdnDdosController(app_manager.OSKenApp):
             destinations.update(self._hosts.ips_for_switch(dpid))
         destinations.update(self._destination_detectors)
 
-        for dst in destinations:
+        for dst in sorted(destinations):
             if self._blocklist.is_blocked(dst):
                 continue
             total_pps = sum(
