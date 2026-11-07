@@ -99,6 +99,7 @@ class DestinationPpsDetector:
         # ou baseline constante. Para valores normais, aplica-se média + 3σ.
         limit = max(
             mean + self._config.threshold_factor * std,
+            mean * self._config.min_rate_factor,
             self._config.minimum_pps,
         )
 
