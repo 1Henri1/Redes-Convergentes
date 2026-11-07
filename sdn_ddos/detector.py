@@ -66,3 +66,66 @@ class AnomalyDetector:
         self._streaks[pair_id] = 0
         self._history.append(rate)
         return Detection(DetectionStatus.NORMAL, rate, len(self._history), mean=mean, std=std, limit=limit)
+
+class DestinationPpsDetector:
+    """Detector 3-sigma independente para o tráfego agregado de cada destino.
+
+    A baseline recebe uma amostra por janela de monitoramento. Amostras
+    anômalas nunca entram no histórico; amostras normais atualizam a janela.
+    """
+
+    def __init__(self, config: DetectorConfig) -> None:
+        self._config = config
+        self._history: Deque[float] = deque(maxlen=config.history_size)
+        self._streak = 0
+
+    @property
+    def baseline_ready(self) -> bool:
+        return len(self._history) >= self._config.baseline_samples
+
+    def evaluate(self, rate: float) -> Detection:
+        """Avalia o PPS total recebido por um destino em uma janela."""
+        rate = max(0.0, float(rate))
+
+        if not self.baseline_ready:
+            self._history.append(rate)
+            return Detection(
+                DetectionStatus.BASELINE, rate, len(self._history)
+            )
+
+        mean = statistics.fmean(self._history)
+        std = statistics.stdev(self._history)
+        # O piso evita limite zero quando o servidor tem tráfego muito baixo
+        # ou baseline constante. Para valores normais, aplica-se média + 3σ.
+        limit = max(
+            mean + self._config.threshold_factor * std,
+            self._config.minimum_pps,
+        )
+
+        if rate > limit:
+            self._streak += 1
+            should_block = self._streak >= self._config.required_anomalies
+            streak = self._streak
+            if should_block:
+                self._streak = 0
+            return Detection(
+                DetectionStatus.ANOMALY,
+                rate,
+                len(self._history),
+                mean=mean,
+                std=std,
+                limit=limit,
+                consecutive_anomalies=streak,
+                should_block=should_block,
+            )
+
+        self._streak = 0
+        self._history.append(rate)
+        return Detection(
+            DetectionStatus.NORMAL,
+            rate,
+            len(self._history),
+            mean=mean,
+            std=std,
+            limit=limit,
+        )
