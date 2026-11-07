@@ -58,13 +58,13 @@ class ConsoleReporter:
 
     def pair_result(
         self, src: str, dst: str, rate: PortRate,
-        pps_detection: Detection, bps_detection: Detection, required: int,
+        bps_detection: Detection, required: int,
         icmp_stats: Optional[dict] = None,
     ) -> None:
-        """Registra tráfego e os resultados de PPS e bytes/s em uma única linha."""
+        """Registra as taxas individuais; a decisão de PPS é por destino."""
         def status(detection: Detection) -> str:
             if detection.status is DetectionStatus.BASELINE:
-                return "BASELINE %s/%s" % (detection.baseline_size, 5)
+                return "BASELINE %s/%s" % (detection.baseline_size, required)
             if detection.status is DetectionStatus.ANOMALY:
                 return "ANOMALIA %s/%s" % (detection.consecutive_anomalies, required)
             return "NORMAL"
@@ -87,9 +87,38 @@ class ConsoleReporter:
             )
         self._log.info(
             "[TRÁFEGO/ANÁLISE] Origem: %-15s | Destino: %-15s | "
-            "PPS: %6.2f (%s) | bytes/s: %10.2f (%s) | Pkts: %-4s%s",
-            src, dst, rate.pps, status(pps_detection), rate.bps,
+            "PPS: %6.2f | bytes/s: %10.2f (%s) | Pkts: %-4s%s",
+            src, dst, rate.pps, rate.bps,
             status(bps_detection), rate.delta_packets, ping_info,
+        )
+
+    def destination_result(self, dst: str, total_pps: float, detection: Detection, required: int) -> None:
+        """Mostra o PPS agregado e o limite estatístico específico do destino."""
+        if detection.status is DetectionStatus.BASELINE:
+            self._log.info(
+                "[BASELINE DESTINO] %-15s | Amostra %s/%s | PPS agregado: %.2f",
+                dst, detection.baseline_size, required, total_pps,
+            )
+            return
+        if detection.status is DetectionStatus.ANOMALY:
+            self._log.warning(
+                "[ANOMALIA DESTINO] %-15s | PPS: %.2f | média: %.2f | "
+                "desvio: %.2f | limite 3σ: %.2f | persistência: %s/%s",
+                dst, total_pps, detection.mean, detection.std,
+                detection.limit, detection.consecutive_anomalies, required,
+            )
+            return
+        self._log.info(
+            "[ANÁLISE DESTINO] %-15s | PPS: %.2f | média: %.2f | "
+            "desvio: %.2f | limite: %.2f | NORMAL",
+            dst, total_pps, detection.mean, detection.std, detection.limit,
+        )
+
+    def destination_without_attribution(self, dst: str) -> None:
+        self._log.warning(
+            "[MITIGAÇÃO] Destino %s excedeu o limite, mas nenhuma origem nova "
+            "foi identificada; nenhum IP foi bloqueado.",
+            dst,
         )
 
     def blocked_traffic(self, src: str, dst: str, rate: PortRate) -> None:
