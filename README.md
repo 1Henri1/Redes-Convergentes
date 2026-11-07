@@ -72,7 +72,11 @@ O controlador utiliza duas métricas por par IP origem-destino:
 - **PPS:** pacotes por segundo.
 - **bytes/s:** volume de dados transmitidos por segundo, calculado a partir dos bytes observados.
 
-Cada métrica tem seu próprio detector estatístico, com baseline global inicializada pelas amostras positivas do primeiro par observado. O limite considera média + fator × desvio padrão, média × fator mínimo e, para PPS, um piso absoluto. A baseline deve ser formada antes da classificação. Taxas anômalas não são adicionadas ao histórico; taxas normais podem atualizar a baseline. Uma origem só é bloqueada quando PPS ou bytes/s apresenta anomalias persistentes pelo número de janelas configurado. O bloqueio é temporário.
+A detecção principal de DDoS utiliza o **PPS agregado recebido por cada destino**. Cada IP de servidor possui uma baseline independente, formada por uma amostra por janela de monitoramento. O limite é calculado por destino como média + 3 × desvio padrão, respeitando um piso absoluto configurável para evitar limite zero. Amostras anômalas não entram no histórico; amostras normais atualizam a janela. O controlador só considera a anomalia confirmada após o número configurado de janelas consecutivas.
+
+Quando um destino apresenta anomalia persistente, o controlador identifica os pares origem-destino que começaram a contribuir na janela em que a anomalia surgiu e bloqueia somente essas origens. Assim, hosts que já enviavam tráfego de forma estável antes do aumento não são bloqueados apenas por terem PPS elevado. O bloqueio continua sendo aplicado ao IP de origem e é temporário. **Limitação:** se um cliente legítimo novo começar a enviar tráfego exatamente durante o mesmo evento, apenas PPS não permite provar se ele é legítimo ou malicioso; o cenário pressupõe que os emissores legítimos já estejam estabelecidos antes do ataque.
+
+A métrica bytes/s continua sendo monitorada por par e exibida como sinal auxiliar, mas a decisão de bloqueio desta versão é baseada na anomalia de PPS agregado por destino.
 
 **Gerador de tráfego:** `tools/generate_traffic.py` gera tráfego TCP ou UDP para testar o monitoramento de PPS e bytes/s. Embora possa abrir várias conexões ou sockets, o controlador não usa a quantidade de fluxos como métrica de detecção. O tamanho e o intervalo dos envios influenciam o volume observado; os resultados reais dependem do comportamento do sistema e devem ser conferidos nos logs do controlador.
 
@@ -137,7 +141,7 @@ Os parâmetros são lidos de variáveis de ambiente com prefixo `SDN_DDOS_`. Os 
 | Variável | Padrão | Descrição |
 | --- | ---: | --- |
 | `SDN_DDOS_MONITOR_INTERVAL` | `5` | Segundos entre coletas de estatísticas |
-| `SDN_DDOS_BASELINE_SAMPLES` | `5` | Amostras do primeiro par origem-destino para formar a linha de base estatística (mín. 2) |
+| `SDN_DDOS_BASELINE_SAMPLES` | `5` | Amostras por destino para formar a linha de base estatística (mín. 2) |
 | `SDN_DDOS_HISTORY_SIZE` | `20` | Janela deslizante de amostras normais do histórico estatístico |
 | `SDN_DDOS_THRESHOLD_FACTOR` | `3` | Limite estatístico: média + fator × desvio padrão |
 | `SDN_DDOS_MIN_RATE_FACTOR` | `1.5` | Taxa também deve superar média × fator |
