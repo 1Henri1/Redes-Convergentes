@@ -58,10 +58,10 @@ def main() -> int:
     parser.add_argument("--destination", default="h10", help="destino dos pings automáticos")
     parser.add_argument("--legitimate-sources", default="h1,h2", help="origens legítimas separadas por vírgula")
     parser.add_argument("--attack-sources", default="h3,h4,h5,h6", help="origens adicionais da fase de sobrecarga")
-    parser.add_argument("--normal-duration", type=float, default=20.0, help="duração da fase normal em segundos")
+    parser.add_argument("--normal-duration", type=float, default=35.0, help="duração da fase normal em segundos")
     parser.add_argument("--attack-duration", type=float, default=30.0, help="duração da fase de sobrecarga em segundos")
     parser.add_argument("--legitimate-interval", type=float, default=1.0, help="intervalo dos pings legítimos em segundos")
-    parser.add_argument("--attack-interval", type=float, default=0.05, help="intervalo dos pings de sobrecarga em segundos")
+    parser.add_argument("--attack-interval", type=float, default=0.1, help="intervalo dos pings de sobrecarga em segundos")
     args = parser.parse_args()
 
     if args.bw <= 0 or args.queue < 1:
