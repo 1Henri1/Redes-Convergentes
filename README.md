@@ -72,7 +72,7 @@ O controlador utiliza duas métricas por par IP origem-destino:
 - **PPS:** pacotes por segundo.
 - **bytes/s:** volume de dados transmitidos por segundo, calculado a partir dos bytes observados.
 
-A detecção principal de DDoS utiliza o **PPS agregado recebido por cada destino**. Cada IP de servidor possui uma baseline independente, formada por uma amostra por janela de monitoramento. O limite é calculado por destino como média + 3 × desvio padrão, respeitando um piso absoluto configurável para evitar limite zero. Amostras anômalas não entram no histórico; amostras normais atualizam a janela. O controlador só considera a anomalia confirmada após o número configurado de janelas consecutivas.
+A detecção principal de DDoS utiliza o **PPS agregado recebido por cada destino**. Cada IP de servidor possui uma baseline independente, formada por uma amostra por janela de monitoramento. O limite é calculado por destino como o maior valor entre média + 3 × desvio padrão, média × fator mínimo e o piso absoluto configurável. Os dois últimos critérios evitam alertas causados por pequenas oscilações quando o desvio padrão é zero ou muito baixo. Amostras anômalas não entram no histórico; amostras normais atualizam a janela. O controlador só considera a anomalia confirmada após o número configurado de janelas consecutivas.
 
 Quando um destino apresenta anomalia persistente, o controlador identifica os pares origem-destino que começaram a contribuir na janela em que a anomalia surgiu e bloqueia somente essas origens. Assim, hosts que já enviavam tráfego de forma estável antes do aumento não são bloqueados apenas por terem PPS elevado. O bloqueio continua sendo aplicado ao IP de origem e é temporário. **Limitação:** se um cliente legítimo novo começar a enviar tráfego exatamente durante o mesmo evento, apenas PPS não permite provar se ele é legítimo ou malicioso; o cenário pressupõe que os emissores legítimos já estejam estabelecidos antes do ataque.
 
@@ -145,7 +145,7 @@ Os parâmetros são lidos de variáveis de ambiente com prefixo `SDN_DDOS_`. Os 
 | `SDN_DDOS_HISTORY_SIZE` | `20` | Janela deslizante de amostras normais do histórico estatístico |
 | `SDN_DDOS_THRESHOLD_FACTOR` | `3` | Limite estatístico: média + fator × desvio padrão |
 | `SDN_DDOS_MIN_RATE_FACTOR` | `1.5` | Taxa também deve superar média × fator |
-| `SDN_DDOS_MINIMUM_PPS` | `2.0` | Piso absoluto do limite para evitar alertas quando a média é próxima de zero |
+| `SDN_DDOS_MINIMUM_PPS` | `10.0` | Piso absoluto do limite para evitar alertas quando a média é próxima de zero |
 | `SDN_DDOS_REQUIRED_ANOMALIES` | `2` | Janelas anômalas consecutivas antes de bloquear |
 | `SDN_DDOS_BLOCK_TIME` | `30` | Duração do bloqueio em segundos |
 | `SDN_DDOS_SUMMARY_EVERY_CYCLES` | `6` | Imprime resumo a cada N ciclos (0 desativa) |
