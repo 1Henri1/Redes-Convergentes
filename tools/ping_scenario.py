@@ -23,8 +23,10 @@ class PingScenario:
         sources: Sequence[str],
         destination: str,
         interval: float = 1.0,
+        count: int = 100,
+        packet_size: int = 56,
     ) -> None:
-        """Inicia pings contínuos; cada origem executa seu próprio processo."""
+        """Inicia pings; count é a quantidade por origem e packet_size é em bytes."""
         if self.net is None:
             raise RuntimeError("A rede Mininet ainda não foi associada ao cenário.")
         if not group.strip():
@@ -33,6 +35,10 @@ class PingScenario:
             raise ValueError("Informe ao menos uma origem.")
         if interval <= 0:
             raise ValueError("O intervalo deve ser positivo.")
+        if count <= 0:
+            raise ValueError("A quantidade de pacotes deve ser positiva.")
+        if packet_size < 0:
+            raise ValueError("O tamanho do pacote não pode ser negativo.")
         if destination in sources:
             raise ValueError("O destino não pode ser uma das origens.")
 
@@ -47,7 +53,13 @@ class PingScenario:
                 for source in sources:
                     host = self.net.get(source)  # valida o host
                     process = host.popen(
-                        ["ping", "-n", "-i", str(interval), destination_ip],
+                        [
+                            "ping", "-n",
+                            "-i", str(interval),
+                            "-c", str(count),
+                            "-s", str(packet_size),
+                            destination_ip,
+                        ],
                         stdout=subprocess.DEVNULL,
                         stderr=subprocess.STDOUT,
                     )
@@ -62,7 +74,9 @@ class PingScenario:
 
         print(
             f"[PING TESTE] Grupo '{group}' iniciado: "
-            f"{', '.join(sources)} -> {destination}, intervalo={interval}s",
+            f"{', '.join(sources)} -> {destination}, "
+            f"intervalo={interval}s, pacotes por origem={count}, "
+            f"tamanho={packet_size} bytes",
             flush=True,
         )
 
@@ -114,6 +128,8 @@ class PingScenario:
             sources=["h1", "h2"],
             destination="h10",
             interval=1.0,
+            count=100,
+            packet_size=56,
         )
         self.wait(35)
 
@@ -123,6 +139,8 @@ class PingScenario:
             sources=["h3", "h4", "h5", "h6"],
             destination="h10",
             interval=0.1,
+            count=500,
+            packet_size=56,
         )
         self.wait(30)
 
@@ -130,7 +148,10 @@ class PingScenario:
         # self.wait(5)
         #
         # Exemplo de um terceiro bloco, mantendo os grupos anteriores ativos:
-        # self.start_pings("bloco_3", ["h7", "h8"], "h10", interval=0.05)
+        # self.start_pings(
+        #     "bloco_3", ["h7", "h8"], "h10",
+        #     interval=0.05, count=1000, packet_size=128,
+        # )
         # self.wait(20)
 
         # Encerra todos os pings ao final da sequência.
