@@ -236,6 +236,8 @@ class SdnDdosController(app_manager.OSKenApp):
                 dst, DestinationPpsDetector(self._config)
             )
             detection = detector.evaluate(total_pps)
+            if detection.status is DetectionStatus.ANOMALY:
+                self._stats.detections += 1
             self._reporter.destination_result(
                 dst, total_pps, detection, self._config.required_anomalies
             )
