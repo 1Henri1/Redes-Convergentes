@@ -103,7 +103,7 @@ class ConsoleReporter:
         if detection.status is DetectionStatus.ANOMALY:
             self._log.warning(
                 "[ANOMALIA DESTINO] %-15s | PPS: %.2f | média: %.2f | "
-                "desvio: %.2f | limite 3σ: %.2f | persistência: %s/%s",
+                "desvio: %.2f | limite estatístico: %.2f | persistência: %s/%s",
                 dst, total_pps, detection.mean, detection.std,
                 detection.limit, detection.consecutive_anomalies, required,
             )
