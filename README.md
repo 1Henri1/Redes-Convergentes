@@ -87,8 +87,8 @@ Inicie os testes com um ping manual para o controlador aprender os hosts. Durant
 
 O cenário automático é opcional. Primeiro, edite diretamente o método `main()` em `tools/ping_scenario.py`. A sequência inicial já contém dois blocos:
 
-1. `normal`: h1 e h2 enviam pings para h10 a cada 1 segundo.
-2. `sobrecarga`: h3, h4, h5 e h6 começam a enviar para h10 a cada 100 ms, enquanto o primeiro grupo continua ativo.
+1. `normal`: h1 e h2 enviam até 100 pings cada para h10, com intervalo de 1 segundo e payload de 56 bytes.
+2. `sobrecarga`: h3, h4, h5 e h6 enviam até 500 pings cada para h10, com intervalo de 100 ms e payload de 56 bytes, enquanto o primeiro grupo continua ativo.
 
 Para executar a sequência, inicie o controlador no terminal 1 e rode no terminal 2:
 
@@ -102,7 +102,7 @@ A CLI do Mininet continua disponível enquanto o cenário roda em segundo plano.
 
 Abra `tools/ping_scenario.py` e modifique somente o método `main()` para organizar as etapas. Os métodos disponíveis são:
 
-- `start_pings(group, sources, destination, interval)`: inicia um grupo de pings contínuos. Cada host da lista `sources` executa um ping simultaneamente.
+- `start_pings(group, sources, destination, interval, count, packet_size)`: inicia pings simultâneos para cada host de `sources`. `interval` define o intervalo em segundos (`-i`), `count` define o máximo de pacotes por origem (`-c`) e `packet_size` define o tamanho do payload em bytes (`-s`).
 - `wait(seconds)`: aguarda o tempo indicado. Os grupos já iniciados continuam enviando durante a pausa.
 - `stop_pings(group)`: encerra apenas o grupo indicado.
 - `stop_all()`: encerra todos os grupos ativos.
@@ -111,13 +111,22 @@ Exemplo de sequência com três blocos:
 
 ```python
 def main(self):
-    self.start_pings("normal", ["h1", "h2"], "h10", interval=1.0)
+    self.start_pings(
+        "normal", ["h1", "h2"], "h10",
+        interval=1.0, count=100, packet_size=56
+    )
     self.wait(35)
 
-    self.start_pings("sobrecarga_1", ["h3", "h4"], "h10", interval=0.1)
+    self.start_pings(
+        "sobrecarga_1", ["h3", "h4"], "h10",
+        interval=0.1, count=500, packet_size=128
+    )
     self.wait(20)
 
-    self.start_pings("sobrecarga_2", ["h5", "h6", "h7"], "h10", interval=0.05)
+    self.start_pings(
+        "sobrecarga_2", ["h5", "h6", "h7"], "h10",
+        interval=0.05, count=1000, packet_size=256
+    )
     self.wait(30)
 
     self.stop_pings("sobrecarga_2")
@@ -126,7 +135,7 @@ def main(self):
     self.stop_all()
 ```
 
-Para acrescentar máquinas, basta incluir seus nomes nas listas, desde que existam na topologia. Para criar outra etapa, adicione outra chamada a `start_pings()`. Uma pausa com `wait()` não interrompe os grupos anteriores. Use nomes de grupo diferentes para cada conjunto que deseja controlar separadamente.
+Para acrescentar máquinas, basta incluir seus nomes nas listas, desde que existam na topologia. Para criar outra etapa, adicione outra chamada a `start_pings()`. Uma pausa com `wait()` não interrompe os grupos anteriores. Use nomes de grupo diferentes para cada conjunto que deseja controlar separadamente. Os três parâmetros do ping são configurados diretamente em cada chamada: `interval` (`-i`), `count` (`-c`, quantidade máxima por host) e `packet_size` (`-s`, tamanho do payload em bytes). Se `wait()` ou `stop_pings()` encerrar o grupo antes, os processos são interrompidos mesmo que não tenham enviado toda a quantidade configurada. O tamanho passado a `-s` é o payload ICMP, não o tamanho total do quadro Ethernet.
 
 O iniciador usa apenas `--auto-ping-test`; os parâmetros do experimento ficam no próprio arquivo Python, evitando precisar alterar a linha de comando a cada teste. Sem essa opção, nenhum ping automático é iniciado.
 
