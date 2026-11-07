@@ -93,8 +93,8 @@ sudo python3 tools/run_mininet.py --auto-ping-test
 
 Com a topologia padrão de dez hosts, o teste ocorre em duas fases:
 
-1. **Tráfego normal (20 s):** `h1` e `h2` enviam pings a cada 1 segundo para `h10`.
-2. **Sobrecarga (30 s):** `h1` e `h2` continuam ativos, enquanto `h3`, `h4`, `h5` e `h6` começam a enviar pings a cada 50 ms para o mesmo destino.
+1. **Tráfego normal (35 s):** `h1` e `h2` enviam pings a cada 1 segundo para `h10`.
+2. **Sobrecarga (30 s):** `h1` e `h2` continuam ativos, enquanto `h3`, `h4`, `h5` e `h6` começam a enviar pings a cada 100 ms para o mesmo destino.
 3. **Encerramento:** os processos de ping são interrompidos. A CLI do Mininet continua disponível para inspeção manual.
 
 O cenário roda em segundo plano, então o prompt `mininet>` permanece disponível. Acompanhe as métricas no terminal do controlador. Para encerrar antes do fim, digite `exit` na CLI ou interrompa o iniciador; os processos de ping são encerrados junto com a rede.
@@ -106,10 +106,10 @@ sudo python3 tools/run_mininet.py --auto-ping-test \\
   --destination h10 \\
   --legitimate-sources h1,h2 \\
   --attack-sources h3,h4,h5,h6 \\
-  --normal-duration 20 \\
+  --normal-duration 35 \\
   --attack-duration 30 \\
   --legitimate-interval 1.0 \\
-  --attack-interval 0.05
+  --attack-interval 0.1
 ```
 
 - `--destination`: servidor que receberá os pings.
