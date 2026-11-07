@@ -117,6 +117,22 @@ class PortRateCalculator:
             rates[pair] = PortRate(dp, db, dp / elapsed, db / elapsed)
         return rates
 
+    def forget_ips(self, ips: list[str]) -> None:
+        """Remove contadores e fluxos associados a hosts desconectados."""
+        removed = set(ips)
+        if not removed:
+            return
+        for pair in list(self._packets):
+            if pair[0] in removed or pair[1] in removed:
+                self._packets.pop(pair, None)
+                self._bytes.pop(pair, None)
+                self._previous.pop(pair, None)
+                self._zero_cycles.pop(pair, None)
+        self._initiators = {
+            key: timestamp for key, timestamp in self._initiators.items()
+            if len(key) < 3 or (key[1] not in removed and key[2] not in removed)
+        }
+
     def forget_switch(self, dpid: int) -> None:
-        """A medição por IP não é específica de um switch."""
+        """A medição é indexada por IP; use forget_ips ao remover hosts."""
         return
