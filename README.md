@@ -83,44 +83,54 @@ A métrica bytes/s continua sendo monitorada por par e exibida como sinal auxili
 Inicie os testes com um ping manual para o controlador aprender os hosts. Durante a calibração, mantenha tráfego normal e aguarde a formação da baseline individual de cada destino e a exibição de seus limites no log. Os comandos abaixo assumem a topologia `single,4` (h1–h4) e que o repositório está acessível no sistema de arquivos da VM.
 
 
-### Cenário automático: tráfego normal seguido de sobrecarga por ping
+### Cenário automático de pings (editável por métodos)
 
-O cenário é opcional e só é executado quando `--auto-ping-test` é informado. Inicie primeiro o controlador no terminal 1 e depois, no terminal 2:
+O cenário automático é opcional. Primeiro, edite diretamente o método `main()` em `tools/ping_scenario.py`. A sequência inicial já contém dois blocos:
+
+1. `normal`: h1 e h2 enviam pings para h10 a cada 1 segundo.
+2. `sobrecarga`: h3, h4, h5 e h6 começam a enviar para h10 a cada 100 ms, enquanto o primeiro grupo continua ativo.
+
+Para executar a sequência, inicie o controlador no terminal 1 e rode no terminal 2:
 
 ```bash
 sudo python3 tools/run_mininet.py --auto-ping-test
 ```
 
-Com a topologia padrão de dez hosts, o teste ocorre em duas fases:
+A CLI do Mininet continua disponível enquanto o cenário roda em segundo plano. Os processos são encerrados ao final da sequência ou quando a rede é fechada.
 
-1. **Tráfego normal (35 s):** `h1` e `h2` enviam pings a cada 1 segundo para `h10`.
-2. **Sobrecarga (30 s):** `h1` e `h2` continuam ativos, enquanto `h3`, `h4`, `h5` e `h6` começam a enviar pings a cada 100 ms para o mesmo destino.
-3. **Encerramento:** os processos de ping são interrompidos. A CLI do Mininet continua disponível para inspeção manual.
+#### Como editar o cenário
 
-O cenário roda em segundo plano, então o prompt `mininet>` permanece disponível. Acompanhe as métricas no terminal do controlador. Para encerrar antes do fim, digite `exit` na CLI ou interrompa o iniciador; os processos de ping são encerrados junto com a rede.
+Abra `tools/ping_scenario.py` e modifique somente o método `main()` para organizar as etapas. Os métodos disponíveis são:
 
-#### Personalizar
+- `start_pings(group, sources, destination, interval)`: inicia um grupo de pings contínuos. Cada host da lista `sources` executa um ping simultaneamente.
+- `wait(seconds)`: aguarda o tempo indicado. Os grupos já iniciados continuam enviando durante a pausa.
+- `stop_pings(group)`: encerra apenas o grupo indicado.
+- `stop_all()`: encerra todos os grupos ativos.
 
-```bash
-sudo python3 tools/run_mininet.py --auto-ping-test \\
-  --destination h10 \\
-  --legitimate-sources h1,h2 \\
-  --attack-sources h3,h4,h5,h6 \\
-  --normal-duration 35 \\
-  --attack-duration 30 \\
-  --legitimate-interval 1.0 \\
-  --attack-interval 0.1
+Exemplo de sequência com três blocos:
+
+```python
+def main(self):
+    self.start_pings("normal", ["h1", "h2"], "h10", interval=1.0)
+    self.wait(35)
+
+    self.start_pings("sobrecarga_1", ["h3", "h4"], "h10", interval=0.1)
+    self.wait(20)
+
+    self.start_pings("sobrecarga_2", ["h5", "h6", "h7"], "h10", interval=0.05)
+    self.wait(30)
+
+    self.stop_pings("sobrecarga_2")
+    self.wait(10)  # o grupo normal e sobrecarga_1 continuam ativos
+
+    self.stop_all()
 ```
 
-- `--destination`: servidor que receberá os pings.
-- `--legitimate-sources`: origens que começam na fase normal e continuam durante a sobrecarga.
-- `--attack-sources`: origens adicionais iniciadas na segunda fase.
-- `--normal-duration` e `--attack-duration`: duração de cada fase, em segundos.
-- `--legitimate-interval` e `--attack-interval`: intervalo entre pings, em segundos.
+Para acrescentar máquinas, basta incluir seus nomes nas listas, desde que existam na topologia. Para criar outra etapa, adicione outra chamada a `start_pings()`. Uma pausa com `wait()` não interrompe os grupos anteriores. Use nomes de grupo diferentes para cada conjunto que deseja controlar separadamente.
 
-Para usar somente comandos manuais, execute sem `--auto-ping-test`.
+O iniciador usa apenas `--auto-ping-test`; os parâmetros do experimento ficam no próprio arquivo Python, evitando precisar alterar a linha de comando a cada teste. Sem essa opção, nenhum ping automático é iniciado.
 
-**Observações:** trata-se de um gerador de carga ICMP simples para a topologia Mininet local, não de uma ferramenta de ataque real. A taxa observada depende da largura de banda, da fila e da capacidade da VM. Se o enlace saturar antes de a baseline ser formada, aumente `--bw`, reduza o número de origens ou aumente `--attack-interval`. Mantenha os testes restritos ao ambiente controlado.
+**Observação:** este cenário gera tráfego ICMP de teste somente na topologia Mininet local. A taxa observada depende da largura de banda, das filas e da capacidade da VM. Se a rede saturar antes da formação da baseline, aumente a largura de banda ou reduza a intensidade do teste.
 
 ### Tráfego normal
 
