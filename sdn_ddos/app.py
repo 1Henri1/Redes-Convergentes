@@ -196,6 +196,8 @@ class SdnDdosController(app_manager.OSKenApp):
         icmp_interval = self._report_icmp_interval()
         for ip in self._blocklist.pop_expired():
             self._reporter.block_expired(ip)
+        # A lista aparece em todos os ciclos, inclusive quando estiver vazia.
+        self._reporter.blocked_ips(self._blocklist.active_ips())
 
         rates = self._rates.collect_rates()
         active_rates: Dict[tuple[str, str], Any] = {}
