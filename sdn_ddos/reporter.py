@@ -95,27 +95,40 @@ class ConsoleReporter:
         entropy: EntropyResult,
         required: int,
     ) -> None:
-        """Exibe em uma linha o volume agregado e a distribuição das origens."""
+        """Exibe volume agregado e distribuição das origens em linhas separadas."""
         if detection.status is DetectionStatus.BASELINE:
-            pps_status = "BASELINE %s/%s" % (detection.baseline_size, required)
-        elif detection.status is DetectionStatus.ANOMALY:
-            pps_status = "ANOMALIA %s/%s" % (detection.consecutive_anomalies, required)
+            pps_detail = "baseline %s/%s" % (detection.baseline_size, required)
         else:
-            pps_status = "NORMAL"
-
-        if not entropy.baseline_ready:
-            entropy_status = "BASELINE %s/%s" % (entropy.baseline_size, required)
-            entropy_limit = "formando"
-        else:
-            entropy_status = "ALTA" if entropy.anomalous else "normal"
-            entropy_limit = "%.3f bits" % entropy.limit
+            pps_detail = (
+                "média %.2f | desvio %.2f | limite %.2f | %s"
+                % (
+                    detection.mean, detection.std, detection.limit,
+                    "ANOMALIA %s/%s" % (detection.consecutive_anomalies, required)
+                    if detection.status is DetectionStatus.ANOMALY else "NORMAL",
+                )
+            )
 
         self._log.info(
-            "[DESTINO] %-15s | PPS: %8.2f | bytes/s: %10.2f | "
-            "origens: %2d | H: %.3f bits (norm %.3f) | Hlim: %s | PPS: %s | H: %s",
-            dst, total_pps, total_bps, entropy.source_count,
-            entropy.entropy_bits, entropy.normalized_entropy,
-            entropy_limit, pps_status, entropy_status,
+            "[DESTINO] %-15s | PPS agregado: %8.2f | bytes/s agregado: %10.2f | "
+            "origens ativas: %2d | %s",
+            dst, total_pps, total_bps, entropy.source_count, pps_detail,
+        )
+
+        if not entropy.baseline_ready:
+            self._log.info(
+                "[ENTROPIA] %-15s | H: %.3f bits | H normalizada: %.3f | "
+                "baseline: %s/%s",
+                dst, entropy.entropy_bits, entropy.normalized_entropy,
+                entropy.baseline_size, required,
+            )
+            return
+
+        self._log.info(
+            "[ENTROPIA] %-15s | H: %.3f bits | H normalizada: %.3f | "
+            "média: %.3f | desvio: %.3f | limite: %.3f bits | %s",
+            dst, entropy.entropy_bits, entropy.normalized_entropy,
+            entropy.mean, entropy.std, entropy.limit,
+            "DISTRIBUIÇÃO ELEVADA" if entropy.anomalous else "NORMAL",
         )
 
     def destination_classification(
