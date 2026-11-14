@@ -58,7 +58,7 @@ class ConsoleReporter:
         """Registra as taxas individuais; a decisão principal de PPS é por destino."""
         def status(detection: Detection) -> str:
             if detection.status is DetectionStatus.BASELINE:
-                return "BASELINE %s/%s" % (detection.baseline_size, required)
+                return "BASELINE %s/%s" % (detection.baseline_size, 5)
             if detection.status is DetectionStatus.ANOMALY:
                 return "ANOMALIA %s/%s" % (detection.consecutive_anomalies, required)
             return "NORMAL"
