@@ -78,6 +78,17 @@ A implementação também calcula a **entropia de Shannon das origens** em cada 
 
 Quando o PPS agregado de um destino apresenta anomalia persistente, o controlador identifica como candidatas as origens que começaram a contribuir a partir da primeira janela anômala. A entropia ajuda a caracterizar a distribuição do evento, mas não identifica, isoladamente, quais IPs são atacantes. O controlador bloqueia temporariamente apenas as origens candidatas, preservando emissores que já estavam ativos antes do aumento. **Limitação:** uma origem legítima nova que comece a transmitir durante o mesmo evento pode ser confundida com uma origem atacante. A distinção depende da hipótese experimental de que os emissores legítimos já estejam estabelecidos antes do ataque.
 
+Exemplo ilustrativo das novas mensagens durante uma anomalia:
+
+```text
+[DESTINO] 10.0.0.10 | PPS:  145.00 | bytes/s:  8120.00 | origens:  6 | H: 2.400 bits (norm 0.930) | Hlim: 1.250 bits | PPS: ANOMALIA 1/2 | H: ALTA
+[CLASSIFICAÇÃO] Destino: 10.0.0.10 | PADRÃO DISTRIBUÍDO (possível DDoS) | origens: 6 | entropia: 2.400 bits | normalizada: 0.930
+[ATRIBUIÇÃO] Destino: 10.0.0.10 | novas origens candidatas: 10.0.0.3, 10.0.0.4
+[BLOQUEIO ATIVADO] IP 10.0.0.3 bloqueado para ENVIAR e RECEBER por 30s (prioridade OpenFlow 100).
+```
+
+Os números acima são apenas um exemplo de formatação, não resultados medidos.
+
 O PPS agregado é a métrica que aciona a detecção e a confirmação. O bytes/s agregado é exibido como contexto, enquanto bytes/s por par continua sendo monitorado como sinal auxiliar. Portanto, a entropia não substitui os limiares estatísticos existentes, mas acrescenta informação sobre a distribuição das origens.
 
 **Gerador de tráfego:** `tools/generate_traffic.py` gera tráfego TCP ou UDP para testar o monitoramento de PPS e bytes/s. Embora possa abrir várias conexões ou sockets, o controlador não usa a quantidade de fluxos como métrica de detecção. O tamanho e o intervalo dos envios influenciam o volume observado; os resultados reais dependem do comportamento do sistema e devem ser conferidos nos logs do controlador.
