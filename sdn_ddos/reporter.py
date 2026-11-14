@@ -123,11 +123,16 @@ class ConsoleReporter:
             )
             return
 
+        # Proteção adicional para evitar que um campo opcional interrompa
+        # a thread de monitoramento caso uma baseline ainda não esteja pronta.
+        mean = "N/A" if entropy.mean is None else "%.3f" % entropy.mean
+        std = "N/A" if entropy.std is None else "%.3f" % entropy.std
+        limit = "N/A" if entropy.limit is None else "%.3f" % entropy.limit
         self._log.info(
             "[ENTROPIA] %-15s | H: %.3f bits | H normalizada: %.3f | "
-            "média: %.3f | desvio: %.3f | limite: %.3f bits | %s",
+            "média: %s | desvio: %s | limite: %s bits | %s",
             dst, entropy.entropy_bits, entropy.normalized_entropy,
-            entropy.mean, entropy.std, entropy.limit,
+            mean, std, limit,
             "DISTRIBUIÇÃO ELEVADA" if entropy.anomalous else "NORMAL",
         )
 
