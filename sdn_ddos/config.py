@@ -11,25 +11,12 @@ from .exceptions import ConfigurationError
 ENV_PREFIX = "SDN_DDOS_"
 
 # O campo hard_timeout do OpenFlow é um uint16, e 0 significa "permanente".
-# Aceitar 0 transformaria um bloqueio *temporário* em definitivo.
 _MAX_OPENFLOW_TIMEOUT = 65535
 
 
 @dataclass(frozen=True)
 class DetectorConfig:
-    """Parâmetros de monitoramento, detecção e mitigação.
-
-    Attributes:
-        monitor_interval: Segundos entre duas coletas de estatísticas.
-        baseline_samples: Amostras necessárias para formar a linha de base.
-        history_size: Tamanho da janela deslizante de PPS "normais" por IP.
-        threshold_factor: Limite estatístico = média + fator * desvio padrão.
-        min_rate_factor: O tráfego também precisa superar média * fator.
-            Evita falsos positivos quando o desvio padrão é muito pequeno.
-        required_anomalies: Janelas anômalas consecutivas antes de bloquear.
-        block_time: Duração do bloqueio, em segundos.
-        summary_every_cycles: Imprime o resumo a cada N ciclos (0 desativa).
-    """
+    """Parâmetros de monitoramento, detecção e mitigação."""
 
     monitor_interval: float = 5.0
     baseline_samples: int = 5
@@ -37,6 +24,9 @@ class DetectorConfig:
     threshold_factor: float = 3.0
     min_rate_factor: float = 1.5
     minimum_pps: float = 10.0
+    entropy_threshold_factor: float = 3.0
+    minimum_entropy_delta: float = 0.25
+    minimum_distributed_sources: int = 2
     required_anomalies: int = 2
     block_time: int = 30
     summary_every_cycles: int = 6
@@ -45,7 +35,6 @@ class DetectorConfig:
         """Valida os parâmetros logo na criação (fail-fast)."""
         rules = (
             (self.monitor_interval > 0, "monitor_interval deve ser > 0"),
-            # stdev exige pelo menos 2 amostras.
             (self.baseline_samples >= 2, "baseline_samples deve ser >= 2"),
             (
                 self.history_size >= self.baseline_samples,
@@ -54,6 +43,18 @@ class DetectorConfig:
             (self.threshold_factor >= 0, "threshold_factor deve ser >= 0"),
             (self.min_rate_factor >= 1, "min_rate_factor deve ser >= 1"),
             (self.minimum_pps >= 0, "minimum_pps deve ser >= 0"),
+            (
+                self.entropy_threshold_factor >= 0,
+                "entropy_threshold_factor deve ser >= 0",
+            ),
+            (
+                self.minimum_entropy_delta >= 0,
+                "minimum_entropy_delta deve ser >= 0",
+            ),
+            (
+                self.minimum_distributed_sources >= 2,
+                "minimum_distributed_sources deve ser >= 2",
+            ),
             (self.required_anomalies >= 1, "required_anomalies deve ser >= 1"),
             (
                 1 <= self.block_time <= _MAX_OPENFLOW_TIMEOUT,
@@ -71,30 +72,13 @@ class DetectorConfig:
         environ: Optional[Mapping[str, str]] = None,
         prefix: str = ENV_PREFIX,
     ) -> "DetectorConfig":
-        """Cria a configuração a partir de variáveis de ambiente.
-
-        Variáveis de ambiente (e não argparse) são usadas porque o OS-Ken
-        faz o seu próprio parsing de argumentos de linha de comando.
-        Exemplo: ``SDN_DDOS_BLOCK_TIME=60``.
-
-        Args:
-            environ: Mapeamento a consultar (padrão: ``os.environ``).
-            prefix: Prefixo das variáveis.
-
-        Returns:
-            Configuração com os valores informados e padrões para o resto.
-
-        Raises:
-            ConfigurationError: Se um valor não puder ser convertido ou
-                violar as regras de validação.
-        """
+        """Cria a configuração a partir de variáveis de ambiente."""
         environ = os.environ if environ is None else environ
         overrides = {}
         for field in fields(cls):
             raw = environ.get(prefix + field.name.upper())
             if raw is None:
                 continue
-            # O tipo do valor padrão indica como converter (int ou float).
             caster = type(field.default)
             try:
                 overrides[field.name] = caster(raw)
