@@ -83,6 +83,20 @@ class DestinationPpsDetector:
     def baseline_ready(self) -> bool:
         return len(self._history) >= self._config.baseline_samples
 
+    @property
+    def receiving_mean(self) -> float:
+        """Média atual da taxa recebida; sem amostras, considera-se zero."""
+        return statistics.fmean(self._history) if self._history else 0.0
+
+    def initialize_zero_baseline(self) -> bool:
+        """Completa a baseline com zeros se o destino ainda tem média zero."""
+        if self.receiving_mean != 0.0 or self.baseline_ready:
+            return False
+        self._history.clear()
+        for _ in range(self._config.baseline_samples):
+            self._history.append(0.0)
+        return True
+
     def evaluate(self, rate: float) -> Detection:
         """Avalia o PPS total recebido por um destino em uma janela."""
         rate = max(0.0, float(rate))
