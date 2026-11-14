@@ -78,11 +78,11 @@ A implementação também calcula a **entropia de Shannon das origens** em cada 
 
 Quando o PPS agregado de um destino apresenta anomalia persistente, o controlador identifica como candidatas as origens que começaram a contribuir a partir da primeira janela anômala. A entropia ajuda a caracterizar a distribuição do evento, mas não identifica, isoladamente, quais IPs são atacantes. O controlador bloqueia temporariamente apenas as origens candidatas, preservando emissores que já estavam ativos antes do aumento. **Limitação:** uma origem legítima nova que comece a transmitir durante o mesmo evento pode ser confundida com uma origem atacante. A distinção depende da hipótese experimental de que os emissores legítimos já estejam estabelecidos antes do ataque.
 
-Exemplo ilustrativo das novas mensagens durante uma anomalia:
+Exemplo ilustrativo das mensagens durante uma anomalia. PPS, bytes/s e entropia são apresentados juntos na linha do destino; a lista de IPs bloqueados é exibida em todos os ciclos, mesmo vazia:
 
 ```text
-[DESTINO] 10.0.0.10 | PPS agregado: 145.00 | bytes/s agregado: 8120.00 | origens ativas: 6 | média 30.00 | desvio 5.00 | limite 45.00 | ANOMALIA 1/2
-[ENTROPIA] 10.0.0.10 | H: 2.400 bits | H normalizada: 0.930 | média: 0.500 | desvio: 0.250 | limite: 1.250 bits | DISTRIBUIÇÃO ELEVADA
+[DESTINO] 10.0.0.10 | PPS: 145.00 (média 30.00 | desvio 5.00 | limite 45.00 | ANOMALIA 1/2) | bytes/s: 8120.00 | origens: 6 | H: 2.400 bits (norm. 0.930) | H média 0.500 | H desvio 0.250 | H limite 1.250 | ENTROPIA ELEVADA
+[IPS BLOQUEADOS] Origens (envio): 10.0.0.3 | Destinos (recebimento): 10.0.0.3
 [CLASSIFICAÇÃO] Destino: 10.0.0.10 | PADRÃO DISTRIBUÍDO (possível DDoS) | origens: 6 | entropia: 2.400 bits | normalizada: 0.930
 [ATRIBUIÇÃO] Destino: 10.0.0.10 | novas origens candidatas: 10.0.0.3, 10.0.0.4
 [BLOQUEIO ATIVADO] IP 10.0.0.3 bloqueado para ENVIAR e RECEBER por 30s (prioridade OpenFlow 100).
