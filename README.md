@@ -227,4 +227,4 @@ Os parâmetros são lidos de variáveis de ambiente com prefixo `SDN_DDOS_`. Os 
 | `SDN_DDOS_SUMMARY_EVERY_CYCLES` | `6` | Imprime resumo a cada N ciclos (0 desativa) |
 | `SDN_DDOS_LOG_LEVEL` | `INFO` | Nível de log |
 
-Os testes devem ser realizados somente no ambiente controlado do Mininet. Para executar os testes unitários, instale `pytest` no ambiente virtual (`pip install pytest`) e execute `pytest -q`. A suíte inclui testes para o cálculo de entropia, normalização, baseline e exclusão de amostras anômalas.
+Os testes devem ser realizados somente no ambiente controlado do Mininet. Para executar os testes unitários, instale `pytest` no ambiente virtual (`pip install pytest`) e execute `pytest -q tests/test_entropy.py`. Os testes adicionados cobrem o cálculo de entropia, normalização, baseline e exclusão de amostras anômalas.
