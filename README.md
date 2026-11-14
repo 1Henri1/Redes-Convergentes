@@ -206,7 +206,10 @@ Os parâmetros são lidos de variáveis de ambiente com prefixo `SDN_DDOS_`. Os 
 | `SDN_DDOS_HISTORY_SIZE` | `20` | Janela deslizante de amostras normais do histórico estatístico |
 | `SDN_DDOS_THRESHOLD_FACTOR` | `3` | Limite estatístico: média + fator × desvio padrão |
 | `SDN_DDOS_MIN_RATE_FACTOR` | `1.5` | Taxa também deve superar média × fator |
-| `SDN_DDOS_MINIMUM_PPS` | `10.0` | Piso absoluto do limite de PPS agregado por destino |\n| `SDN_DDOS_ENTROPY_THRESHOLD_FACTOR` | `3.0` | Fator de desvio padrão para o limite de entropia |\n| `SDN_DDOS_MINIMUM_ENTROPY_DELTA` | `0.25` | Incremento mínimo de entropia acima da média normal, em bits |\n| `SDN_DDOS_MINIMUM_DISTRIBUTED_SOURCES` | `2` | Número mínimo de origens para caracterizar distribuição elevada |
+| `SDN_DDOS_MINIMUM_PPS` | `10.0` | Piso absoluto do limite de PPS agregado por destino |
+| `SDN_DDOS_ENTROPY_THRESHOLD_FACTOR` | `3.0` | Fator de desvio padrão para o limite de entropia |
+| `SDN_DDOS_MINIMUM_ENTROPY_DELTA` | `0.25` | Incremento mínimo de entropia acima da média normal, em bits |
+| `SDN_DDOS_MINIMUM_DISTRIBUTED_SOURCES` | `2` | Número mínimo de origens para caracterizar distribuição elevada |
 | `SDN_DDOS_REQUIRED_ANOMALIES` | `2` | Janelas anômalas consecutivas antes de bloquear |
 | `SDN_DDOS_BLOCK_TIME` | `30` | Duração do bloqueio em segundos |
 | `SDN_DDOS_SUMMARY_EVERY_CYCLES` | `6` | Imprime resumo a cada N ciclos (0 desativa) |
