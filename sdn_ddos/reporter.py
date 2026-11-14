@@ -1,13 +1,10 @@
-"""Apresentação (logs formatados) dos eventos do controlador.
-
-Toda a formatação fica aqui para que a lógica de detecção e de rede não
-contenha ``print``/f-strings de interface e possa ser testada em silêncio.
-"""
+"""Apresentação (logs formatados) dos eventos do controlador."""
 
 import logging
 from typing import List, Optional
 
 from .config import DetectorConfig
+from .entropy import EntropyResult
 from .flow_manager import BLOCK_PRIORITY
 from .logging_setup import LOGGER_NAME
 from .models import ControllerStats, Detection, DetectionStatus, PortRate
@@ -16,7 +13,6 @@ _WIDTH = 70
 
 
 def _box(title: str, rows: Optional[List[str]] = None, fill: str = "-") -> str:
-    """Desenha uma caixa de texto com título centralizado e linhas opcionais."""
     border = "+" + fill * _WIDTH + "+"
     lines = ["", border, f"| {title:^{_WIDTH - 2}} |", border]
     for row in rows or []:
@@ -27,22 +23,22 @@ def _box(title: str, rows: Optional[List[str]] = None, fill: str = "-") -> str:
 
 
 class ConsoleReporter:
-    """Emite os eventos do controlador no log, em formato legível."""
+    """Emite eventos do controlador em formato legível."""
 
     def __init__(self, logger: Optional[logging.Logger] = None) -> None:
         self._log = logger or logging.getLogger(LOGGER_NAME)
 
-    # --- Ciclo de vida ---------------------------------------------------
-
     def banner(self, config: DetectorConfig) -> None:
         self._log.info(_box("SDN DDoS DETECTION CONTROLLER", [
-            f"Monitoramento         : {config.monitor_interval:g}s",
-            f"Amostras de baseline  : {config.baseline_samples}",
-            f"Fator estatístico     : {config.threshold_factor:g}x",
-            f"Fator mínimo          : {config.min_rate_factor:g}x",
-            f"Piso absoluto         : {config.minimum_pps:g} PPS",
-            f"Anomalias necessárias : {config.required_anomalies}",
-            f"Tempo de bloqueio     : {config.block_time}s",
+            f"Monitoramento             : {config.monitor_interval:g}s",
+            f"Amostras da baseline      : {config.baseline_samples}",
+            f"Limiar PPS                : média + {config.threshold_factor:g}σ",
+            f"Piso mínimo PPS           : {config.minimum_pps:g}",
+            f"Limiar de entropia        : média + {config.entropy_threshold_factor:g}σ",
+            f"Incremento mínimo H       : {config.minimum_entropy_delta:g} bits",
+            f"Mínimo de origens p/ DDoS : {config.minimum_distributed_sources}",
+            f"Janelas para confirmação  : {config.required_anomalies}",
+            f"Tempo de bloqueio         : {config.block_time}s",
         ], fill="="))
 
     def switch_connected(self, dpid: int) -> None:
@@ -54,14 +50,12 @@ class ConsoleReporter:
     def switch_disconnected(self, dpid: int) -> None:
         self._log.warning("[SWITCH] Datapath %s desconectado", dpid)
 
-    # --- Tráfego e detecção ------------------------------------------------
-
     def pair_result(
         self, src: str, dst: str, rate: PortRate,
         bps_detection: Detection, required: int,
         icmp_stats: Optional[dict] = None,
     ) -> None:
-        """Registra as taxas individuais; a decisão de PPS é por destino."""
+        """Registra as taxas individuais; a decisão principal de PPS é por destino."""
         def status(detection: Detection) -> str:
             if detection.status is DetectionStatus.BASELINE:
                 return "BASELINE %s/%s" % (detection.baseline_size, required)
@@ -86,32 +80,64 @@ class ConsoleReporter:
                 )
             )
         self._log.info(
-            "[TRÁFEGO/ANÁLISE] Origem: %-15s | Destino: %-15s | "
-            "PPS: %6.2f | bytes/s: %10.2f (%s) | Pkts: %-4s%s",
+            "[PAR] Origem: %-15s | Destino: %-15s | PPS: %7.2f | "
+            "bytes/s: %10.2f (%s) | Pkts: %-5s%s",
             src, dst, rate.pps, rate.bps,
             status(bps_detection), rate.delta_packets, ping_info,
         )
 
-    def destination_result(self, dst: str, total_pps: float, detection: Detection, required: int) -> None:
-        """Mostra o PPS agregado e o limite estatístico específico do destino."""
+    def destination_result(
+        self,
+        dst: str,
+        total_pps: float,
+        total_bps: float,
+        detection: Detection,
+        entropy: EntropyResult,
+        required: int,
+    ) -> None:
+        """Exibe em uma linha o volume agregado e a distribuição das origens."""
         if detection.status is DetectionStatus.BASELINE:
-            self._log.info(
-                "[BASELINE DESTINO] %-15s | Amostra %s/%s | PPS agregado: %.2f",
-                dst, detection.baseline_size, required, total_pps,
-            )
-            return
-        if detection.status is DetectionStatus.ANOMALY:
-            self._log.warning(
-                "[ANOMALIA DESTINO] %-15s | PPS: %.2f | média: %.2f | "
-                "desvio: %.2f | limite estatístico: %.2f | persistência: %s/%s",
-                dst, total_pps, detection.mean, detection.std,
-                detection.limit, detection.consecutive_anomalies, required,
-            )
-            return
+            pps_status = "BASELINE %s/%s" % (detection.baseline_size, required)
+        elif detection.status is DetectionStatus.ANOMALY:
+            pps_status = "ANOMALIA %s/%s" % (detection.consecutive_anomalies, required)
+        else:
+            pps_status = "NORMAL"
+
+        if not entropy.baseline_ready:
+            entropy_status = "BASELINE %s/%s" % (entropy.baseline_size, required)
+            entropy_limit = "formando"
+        else:
+            entropy_status = "ALTA" if entropy.anomalous else "normal"
+            entropy_limit = "%.3f bits" % entropy.limit
+
         self._log.info(
-            "[ANÁLISE DESTINO] %-15s | PPS: %.2f | média: %.2f | "
-            "desvio: %.2f | limite: %.2f | NORMAL",
-            dst, total_pps, detection.mean, detection.std, detection.limit,
+            "[DESTINO] %-15s | PPS: %8.2f | bytes/s: %10.2f | "
+            "origens: %2d | H: %.3f bits (norm %.3f) | Hlim: %s | PPS: %s | H: %s",
+            dst, total_pps, total_bps, entropy.source_count,
+            entropy.entropy_bits, entropy.normalized_entropy,
+            entropy_limit, pps_status, entropy_status,
+        )
+
+    def destination_classification(
+        self, dst: str, entropy: EntropyResult, distributed: bool
+    ) -> None:
+        """Diferencia uma anomalia de volume concentrada de um padrão distribuído."""
+        pattern = (
+            "PADRÃO DISTRIBUÍDO (possível DDoS)"
+            if distributed
+            else "PADRÃO CONCENTRADO/INCONCLUSIVO (possível DoS)"
+        )
+        self._log.warning(
+            "[CLASSIFICAÇÃO] Destino: %s | %s | origens: %d | "
+            "entropia: %.3f bits | normalizada: %.3f",
+            dst, pattern, entropy.source_count,
+            entropy.entropy_bits, entropy.normalized_entropy,
+        )
+
+    def destination_candidates(self, dst: str, candidates: List[str]) -> None:
+        self._log.warning(
+            "[ATRIBUIÇÃO] Destino: %s | novas origens candidatas: %s",
+            dst, ", ".join(candidates) if candidates else "nenhuma",
         )
 
     def destination_without_attribution(self, dst: str) -> None:
@@ -123,15 +149,15 @@ class ConsoleReporter:
 
     def blocked_traffic(self, src: str, dst: str, rate: PortRate) -> None:
         self._log.warning(
-            "[IP DE ORIGEM BLOQUEADO] Origem: %-15s | Destino: %-15s | "
-            "PPS: %6.2f | bytes/s: %10.2f",
+            "[TRÁFEGO DESCARTADO - ORIGEM BLOQUEADA] Origem: %-15s | "
+            "Destino: %-15s | PPS: %7.2f | bytes/s: %10.2f",
             src, dst, rate.pps, rate.bps,
         )
 
     def blocked_destination_traffic(self, src: str, dst: str, rate: PortRate) -> None:
         self._log.warning(
-            "[IP DE DESTINO BLOQUEADO] Origem: %-15s | Destino: %-15s | "
-            "PPS: %6.2f | bytes/s: %10.2f",
+            "[TRÁFEGO DESCARTADO - DESTINO BLOQUEADO] Origem: %-15s | "
+            "Destino: %-15s | PPS: %7.2f | bytes/s: %10.2f",
             src, dst, rate.pps, rate.bps,
         )
 
@@ -142,10 +168,7 @@ class ConsoleReporter:
         )
 
     def normal(self, pair_id: str, detection: Detection) -> None:
-        self._log.info(
-            "[ANÁLISE] %-34s PPS: %6.2f | Status: NORMAL",
-            pair_id, detection.pps,
-        )
+        self._log.info("[ANÁLISE] %-34s PPS: %6.2f | Status: NORMAL", pair_id, detection.pps)
 
     def anomaly(
         self, pair_id: str, detection: Detection, required: int, metric: str = "PPS"
@@ -161,25 +184,22 @@ class ConsoleReporter:
             metric, mean, metric, std, metric, limit, metric,
         )
 
-    # --- Mitigação -------------------------------------------------------
-
     def block_activated(self, ip: str, duration: int) -> None:
-        self._log.warning("[IP DE ORIGEM BLOQUEADO] %s por %ss", ip, duration)
-        self._log.warning(_box("[BLOQUEIO ATIVADO]", [
-            f"IP                 : {ip}",
-            f"Duração            : {duration}s",
-            f"Prioridade OpenFlow: {BLOCK_PRIORITY}",
-        ], fill="="))
+        self._log.warning(
+            "[BLOQUEIO ATIVADO] IP %s bloqueado para ENVIAR e RECEBER por %ss "
+            "(prioridade OpenFlow %s).",
+            ip, duration, BLOCK_PRIORITY,
+        )
 
     def block_expired(self, ip: str) -> None:
         self._log.info("[BLOQUEIO EXPIRADO] %s - tráfego novamente permitido.", ip)
 
-    # --- Resumo ----------------------------------------------------------
-
     def summary(self, stats: ControllerStats, switches: int, blocked_ips: int) -> None:
         self._log.info(_box("RESUMO DO CONTROLADOR", [
-            f"Switches conectados : {switches}",
-            f"Detecções           : {stats.detections}",
-            f"Bloqueios           : {stats.blocks}",
-            f"IPs bloqueados      : {blocked_ips}",
+            f"Switches conectados        : {switches}",
+            f"Detecções                   : {stats.detections}",
+            f"Eventos com padrão DDoS     : {stats.distributed_events}",
+            f"Eventos concentrados       : {stats.concentrated_events}",
+            f"Bloqueios                   : {stats.blocks}",
+            f"IPs bloqueados              : {blocked_ips}",
         ]))
