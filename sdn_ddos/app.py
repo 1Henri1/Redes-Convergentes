@@ -22,7 +22,7 @@ from os_ken.controller.handler import (
     set_ev_cls,
 )
 from os_ken.lib import hub
-from os_ken.lib.packet import arp, ethernet, icmp, ipv4, packet
+from os_ken.lib.packet import arp, ethernet, icmp, ipv4, packet, tcp, udp
 from os_ken.ofproto import ofproto_v1_3
 
 from .blocklist import BlockList
@@ -139,6 +139,7 @@ class SdnDdosController(app_manager.OSKenApp):
         dpid = datapath.id
         self._hosts.learn_mac(dpid, eth.src, in_port)
         self._learn_ip(dpid, pkt, in_port)
+        self._prepare_destination_baseline(pkt)
 
         # Conta o pacote inicial; cópias de regras de encaminhamento não devem
         # ser reenviadas pelo controlador.
@@ -155,6 +156,36 @@ class SdnDdosController(app_manager.OSKenApp):
             self._flows.install_forwarding(datapath, in_port, eth.dst, out_port)
 
         self._flows.forward_packet(datapath, msg, in_port, out_port)
+
+    def _prepare_destination_baseline(self, pkt: packet.Packet) -> None:
+        """Inicializa com zeros a baseline de destinos sem tráfego recebido."""
+        ip_pkt = pkt.get_protocol(ipv4.ipv4)
+        if ip_pkt is None:
+            return
+
+        # Considera solicitações que iniciam comunicação: TCP SYN, datagrama
+        # UDP ou ICMP Echo Request. Respostas não devem disparar inicialização.
+        tcp_pkt = pkt.get_protocol(tcp.tcp)
+        udp_pkt = pkt.get_protocol(udp.udp)
+        icmp_pkt = pkt.get_protocol(icmp.icmp)
+        is_request = (
+            (tcp_pkt is not None and tcp_pkt.syn and not tcp_pkt.ack)
+            or udp_pkt is not None
+            or (icmp_pkt is not None and icmp_pkt.type == 8)
+        )
+        if not is_request:
+            return
+
+        dst = ip_pkt.dst
+        detector = self._destination_detectors.setdefault(
+            dst, DestinationPpsDetector(self._config)
+        )
+        if detector.initialize_zero_baseline():
+            self._known_destinations.add(dst)
+            _logger.info(
+                "[BASELINE] Destino %s inicializado com %s amostras de recebimento zero",
+                dst, self._config.baseline_samples,
+            )
 
     def _learn_ip(self, dpid: int, pkt: packet.Packet, in_port: int) -> None:
         """Aprende o IP do remetente a partir de IPv4 ou ARP.
