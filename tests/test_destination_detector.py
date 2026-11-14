@@ -93,3 +93,25 @@ def test_zero_baseline_uses_absolute_pps_floor():
 
     assert result.status is DetectionStatus.NORMAL
     assert result.limit == pytest.approx(10)
+
+
+def test_new_destination_collects_five_real_baseline_cycles():
+    detector = DestinationPpsDetector(make_config())
+
+    assert not detector.baseline_ready
+    for cycle in range(4):
+        result = detector.evaluate(0)
+        assert result.status is DetectionStatus.BASELINE
+        assert result.baseline_size == cycle + 1
+        assert not detector.baseline_ready
+
+    result = detector.evaluate(0)
+    assert result.status is DetectionStatus.BASELINE
+    assert result.baseline_size == 5
+    assert detector.baseline_ready
+
+    # A sexta janela já é avaliada contra a baseline de cinco ciclos.
+    result = detector.evaluate(20)
+    assert result.status is DetectionStatus.ANOMALY
+    assert result.mean == pytest.approx(0)
+    assert result.limit == pytest.approx(10)
