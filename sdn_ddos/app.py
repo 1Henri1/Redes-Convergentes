@@ -158,13 +158,13 @@ class SdnDdosController(app_manager.OSKenApp):
         self._flows.forward_packet(datapath, msg, in_port, out_port)
 
     def _prepare_destination_baseline(self, pkt: packet.Packet) -> None:
-        """Inicializa com zeros a baseline de destinos sem tráfego recebido."""
+        """Cria a baseline individual ao surgir uma solicitação para novo destino."""
         ip_pkt = pkt.get_protocol(ipv4.ipv4)
         if ip_pkt is None:
             return
 
         # Considera solicitações que iniciam comunicação: TCP SYN, datagrama
-        # UDP ou ICMP Echo Request. Respostas não devem disparar inicialização.
+        # UDP ou ICMP Echo Request. Respostas não disparam a criação.
         tcp_pkt = pkt.get_protocol(tcp.tcp)
         udp_pkt = pkt.get_protocol(udp.udp)
         icmp_pkt = pkt.get_protocol(icmp.icmp)
@@ -177,15 +177,18 @@ class SdnDdosController(app_manager.OSKenApp):
             return
 
         dst = ip_pkt.dst
-        detector = self._destination_detectors.setdefault(
-            dst, DestinationPpsDetector(self._config)
+        if dst in self._destination_detectors:
+            return
+
+        # Não preenche a baseline antecipadamente. O detector será alimentado
+        # uma vez por ciclo de monitoramento, inclusive com PPS = 0, até obter
+        # as cinco amostras configuradas.
+        self._destination_detectors[dst] = DestinationPpsDetector(self._config)
+        self._known_destinations.add(dst)
+        _logger.info(
+            "[BASELINE] Iniciada para o novo destino %s: coleta de %s ciclos",
+            dst, self._config.baseline_samples,
         )
-        if detector.initialize_zero_baseline():
-            self._known_destinations.add(dst)
-            _logger.info(
-                "[BASELINE] Destino %s inicializado com %s amostras de recebimento zero",
-                dst, self._config.baseline_samples,
-            )
 
     def _learn_ip(self, dpid: int, pkt: packet.Packet, in_port: int) -> None:
         """Aprende o IP do remetente a partir de IPv4 ou ARP.
