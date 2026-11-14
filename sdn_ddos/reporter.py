@@ -198,8 +198,8 @@ class ConsoleReporter:
         self._log.info(_box("RESUMO DO CONTROLADOR", [
             f"Switches conectados        : {switches}",
             f"Detecções                   : {stats.detections}",
-            f"Eventos com padrão DDoS     : {stats.distributed_events}",
-            f"Eventos concentrados       : {stats.concentrated_events}",
+            f"Janelas anômalas distribuídas: {stats.distributed_events}",
+            f"Janelas anômalas concentradas: {stats.concentrated_events}",
             f"Bloqueios                   : {stats.blocks}",
             f"IPs bloqueados              : {blocked_ips}",
         ]))
