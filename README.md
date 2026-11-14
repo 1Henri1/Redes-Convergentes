@@ -81,7 +81,8 @@ Quando o PPS agregado de um destino apresenta anomalia persistente, o controlado
 Exemplo ilustrativo das novas mensagens durante uma anomalia:
 
 ```text
-[DESTINO] 10.0.0.10 | PPS:  145.00 | bytes/s:  8120.00 | origens:  6 | H: 2.400 bits (norm 0.930) | Hlim: 1.250 bits | PPS: ANOMALIA 1/2 | H: ALTA
+[DESTINO] 10.0.0.10 | PPS agregado: 145.00 | bytes/s agregado: 8120.00 | origens ativas: 6 | média 30.00 | desvio 5.00 | limite 45.00 | ANOMALIA 1/2
+[ENTROPIA] 10.0.0.10 | H: 2.400 bits | H normalizada: 0.930 | média: 0.500 | desvio: 0.250 | limite: 1.250 bits | DISTRIBUIÇÃO ELEVADA
 [CLASSIFICAÇÃO] Destino: 10.0.0.10 | PADRÃO DISTRIBUÍDO (possível DDoS) | origens: 6 | entropia: 2.400 bits | normalizada: 0.930
 [ATRIBUIÇÃO] Destino: 10.0.0.10 | novas origens candidatas: 10.0.0.3, 10.0.0.4
 [BLOQUEIO ATIVADO] IP 10.0.0.3 bloqueado para ENVIAR e RECEBER por 30s (prioridade OpenFlow 100).
