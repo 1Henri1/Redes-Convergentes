@@ -1,6 +1,6 @@
 # SDN DDoS Controller
 
-Controlador SDN desenvolvido em Python utilizando **OS-Ken**, **Mininet** e **Open vSwitch**, com monitoramento de tráfego, detecção estatística de PPS agregado por destino e bloqueio temporário das origens identificadas.
+Controlador SDN desenvolvido em Python utilizando **OS-Ken**, **Mininet** e **Open vSwitch**, com monitoramento de tráfego, detecção estatística de PPS agregado por destino, análise de entropia das origens e bloqueio temporário dos emissores candidatos.
 
 ## 1. Instalar dependências
 
@@ -72,11 +72,13 @@ O controlador utiliza duas métricas por par IP origem-destino:
 - **PPS:** pacotes por segundo.
 - **bytes/s:** volume de dados transmitidos por segundo, calculado a partir dos bytes observados.
 
-A detecção principal de DDoS utiliza o **PPS agregado recebido por cada destino**. Cada IP de servidor possui uma baseline independente, formada por uma amostra por janela de monitoramento. O limite é calculado por destino como o maior valor entre média + 3 × desvio padrão, média × fator mínimo e o piso absoluto configurável. Os dois últimos critérios evitam alertas causados por pequenas oscilações quando o desvio padrão é zero ou muito baixo. Amostras anômalas não entram no histórico; amostras normais atualizam a janela. O controlador só considera a anomalia confirmada após o número configurado de janelas consecutivas. É necessário iniciar o controlador e aprender os IPs dos servidores antes do ataque, mantendo um período inicial de tráfego benigno para formar as baselines.
+A detecção principal continua baseada no **PPS agregado recebido por cada destino**. Cada destino possui uma baseline independente, com uma amostra por janela. O limite é o maior entre média + 3 × desvio padrão, média × fator mínimo e o piso absoluto configurável. Amostras acima do limite não entram no histórico; amostras normais atualizam a janela. A anomalia precisa persistir pelo número configurado de janelas consecutivas.
 
-Quando um destino apresenta anomalia persistente, o controlador identifica os pares origem-destino que começaram a contribuir na janela em que a anomalia surgiu e bloqueia somente essas origens. Assim, hosts que já enviavam tráfego de forma estável antes do aumento não são bloqueados apenas por terem PPS elevado. O bloqueio continua sendo aplicado ao IP de origem e é temporário. **Limitação:** se um cliente legítimo novo começar a enviar tráfego exatamente durante o mesmo evento, apenas PPS não permite provar se ele é legítimo ou malicioso; o cenário pressupõe que os emissores legítimos já estejam estabelecidos antes do ataque.
+A implementação também calcula a **entropia de Shannon das origens** em cada destino. Para cada janela, a proporção de pacotes da origem i é (p_i=P_i/\sum_j P_j), e a entropia é (H=-\sum_i p_i\log_2(p_i)). A saída também mostra a entropia normalizada entre 0 e 1, o número de origens e o limite estatístico de H. A baseline de entropia é específica de cada destino e não é atualizada em janelas com PPS agregado anômalo. A entropia elevada caracteriza uma distribuição mais espalhada entre as origens, mas **não dispara bloqueio sozinha**: ela complementa a anomalia de volume para classificar o evento como padrão distribuído (possível DDoS) ou concentrado/inconclusivo (possível DoS).
 
-A métrica bytes/s continua sendo monitorada por par e exibida como sinal auxiliar, mas a decisão de bloqueio desta versão é baseada na anomalia de PPS agregado por destino.
+Quando o PPS agregado de um destino apresenta anomalia persistente, o controlador identifica como candidatas as origens que começaram a contribuir a partir da primeira janela anômala. A entropia ajuda a caracterizar a distribuição do evento, mas não identifica, isoladamente, quais IPs são atacantes. O controlador bloqueia temporariamente apenas as origens candidatas, preservando emissores que já estavam ativos antes do aumento. **Limitação:** uma origem legítima nova que comece a transmitir durante o mesmo evento pode ser confundida com uma origem atacante. A distinção depende da hipótese experimental de que os emissores legítimos já estejam estabelecidos antes do ataque.
+
+O PPS agregado é a métrica que aciona a detecção e a confirmação. O bytes/s agregado é exibido como contexto, enquanto bytes/s por par continua sendo monitorado como sinal auxiliar. Portanto, a entropia não substitui os limiares estatísticos existentes, mas acrescenta informação sobre a distribuição das origens.
 
 **Gerador de tráfego:** `tools/generate_traffic.py` gera tráfego TCP ou UDP para testar o monitoramento de PPS e bytes/s. Embora possa abrir várias conexões ou sockets, o controlador não usa a quantidade de fluxos como métrica de detecção. O tamanho e o intervalo dos envios influenciam o volume observado; os resultados reais dependem do comportamento do sistema e devem ser conferidos nos logs do controlador.
 
@@ -204,10 +206,10 @@ Os parâmetros são lidos de variáveis de ambiente com prefixo `SDN_DDOS_`. Os 
 | `SDN_DDOS_HISTORY_SIZE` | `20` | Janela deslizante de amostras normais do histórico estatístico |
 | `SDN_DDOS_THRESHOLD_FACTOR` | `3` | Limite estatístico: média + fator × desvio padrão |
 | `SDN_DDOS_MIN_RATE_FACTOR` | `1.5` | Taxa também deve superar média × fator |
-| `SDN_DDOS_MINIMUM_PPS` | `10.0` | Piso absoluto do limite para evitar alertas quando a média é próxima de zero |
+| `SDN_DDOS_MINIMUM_PPS` | `10.0` | Piso absoluto do limite de PPS agregado por destino |\n| `SDN_DDOS_ENTROPY_THRESHOLD_FACTOR` | `3.0` | Fator de desvio padrão para o limite de entropia |\n| `SDN_DDOS_MINIMUM_ENTROPY_DELTA` | `0.25` | Incremento mínimo de entropia acima da média normal, em bits |\n| `SDN_DDOS_MINIMUM_DISTRIBUTED_SOURCES` | `2` | Número mínimo de origens para caracterizar distribuição elevada |
 | `SDN_DDOS_REQUIRED_ANOMALIES` | `2` | Janelas anômalas consecutivas antes de bloquear |
 | `SDN_DDOS_BLOCK_TIME` | `30` | Duração do bloqueio em segundos |
 | `SDN_DDOS_SUMMARY_EVERY_CYCLES` | `6` | Imprime resumo a cada N ciclos (0 desativa) |
 | `SDN_DDOS_LOG_LEVEL` | `INFO` | Nível de log |
 
-Os testes devem ser realizados somente no ambiente controlado do Mininet.
+Os testes devem ser realizados somente no ambiente controlado do Mininet. Para executar os testes unitários, instale `pytest` no ambiente virtual (`pip install pytest`) e execute `pytest -q`. A suíte inclui testes para o cálculo de entropia, normalização, baseline e exclusão de amostras anômalas.
