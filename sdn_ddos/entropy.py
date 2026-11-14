@@ -72,17 +72,17 @@ class DestinationEntropyDetector:
     ) -> EntropyResult:
         entropy, normalized, source_count, total_packets = shannon_entropy(packet_counts)
 
+        if not self.baseline_ready and update_baseline:
+            self._history.append(entropy)
+
         if not self.baseline_ready:
-            if update_baseline:
-                self._history.append(entropy)
-            # Esta amostra ainda pertence à fase de formação da baseline.
-            # Mesmo que ela complete a quantidade exigida, média/desvio/limite
-            # só estarão disponíveis na próxima avaliação.
             return EntropyResult(
                 entropy, normalized, source_count, total_packets,
                 len(self._history), False,
             )
 
+        # Se esta amostra completou a baseline, já calculamos as estatísticas
+        # nesta mesma avaliação, evitando baseline_ready=True com campos None.
         mean = statistics.fmean(self._history)
         std = statistics.stdev(self._history)
         # O incremento mínimo evita um limite praticamente nulo quando a
