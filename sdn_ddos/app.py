@@ -53,6 +53,8 @@ class SdnDdosController(app_manager.OSKenApp):
         self._bps_detector = AnomalyDetector(self._config)
         # Cada servidor mantém sua própria baseline de PPS agregado recebido.
         self._destination_detectors: Dict[str, DestinationPpsDetector] = {}
+        # Apenas IPs que já foram observados como receptores entram no relatório agregado.
+        self._known_destinations: set[str] = set()
         # Entropia independente por destino; caracteriza a distribuição das origens.
         self._destination_entropy_detectors: Dict[str, DestinationEntropyDetector] = {}
         # Ciclo em que cada par origem-destino começou a aparecer.
@@ -102,6 +104,7 @@ class SdnDdosController(app_manager.OSKenApp):
             disconnected_ips = self._hosts.ips_for_switch(datapath.id)
             for ip in disconnected_ips:
                 self._destination_detectors.pop(ip, None)
+                self._known_destinations.discard(ip)
                 self._destination_entropy_detectors.pop(ip, None)
                 self._destination_anomaly_start.pop(ip, None)
                 self._destination_candidates.pop(ip, None)
@@ -222,12 +225,12 @@ class SdnDdosController(app_manager.OSKenApp):
                     datapath, src, dst, rate, icmp_interval.get((src, dst))
                 )
 
-        # Inclui também destinos conhecidos sem tráfego nesta janela:
-        # assim uma janela sem pacotes é registrada como PPS = 0.
-        destinations = {dst for (_src, dst) in active_rates}
-        for dpid in self._datapaths:
-            destinations.update(self._hosts.ips_for_switch(dpid))
-        destinations.update(self._destination_detectors)
+        # Mantém apenas IPs que já foram observados como destino. Assim, uma
+        # origem que nunca recebeu tráfego não aparece indevidamente em [DESTINO].
+        self._known_destinations.update(dst for (_src, dst) in active_rates)
+        # Os destinos já conhecidos continuam sendo avaliados com PPS = 0
+        # quando não recebem pacotes nesta janela.
+        destinations = self._known_destinations | set(self._destination_detectors)
 
         for dst in sorted(destinations):
             if self._blocklist.is_blocked(dst):
