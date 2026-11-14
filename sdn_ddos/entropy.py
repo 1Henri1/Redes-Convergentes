@@ -75,9 +75,12 @@ class DestinationEntropyDetector:
         if not self.baseline_ready:
             if update_baseline:
                 self._history.append(entropy)
+            # Esta amostra ainda pertence à fase de formação da baseline.
+            # Mesmo que ela complete a quantidade exigida, média/desvio/limite
+            # só estarão disponíveis na próxima avaliação.
             return EntropyResult(
                 entropy, normalized, source_count, total_packets,
-                len(self._history), self.baseline_ready,
+                len(self._history), False,
             )
 
         mean = statistics.fmean(self._history)
