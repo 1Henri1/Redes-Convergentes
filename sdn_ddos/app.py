@@ -28,6 +28,7 @@ from os_ken.ofproto import ofproto_v1_3
 from .blocklist import BlockList
 from .config import DetectorConfig
 from .detector import AnomalyDetector, DestinationPpsDetector
+from .entropy import DestinationEntropyDetector
 from .flow_manager import FlowManager
 from .host_table import HostTable
 from .logging_setup import LOGGER_NAME, configure_logging
@@ -52,6 +53,8 @@ class SdnDdosController(app_manager.OSKenApp):
         self._bps_detector = AnomalyDetector(self._config)
         # Cada servidor mantém sua própria baseline de PPS agregado recebido.
         self._destination_detectors: Dict[str, DestinationPpsDetector] = {}
+        # Entropia independente por destino; caracteriza a distribuição das origens.
+        self._destination_entropy_detectors: Dict[str, DestinationEntropyDetector] = {}
         # Ciclo em que cada par origem-destino começou a aparecer.
         self._pair_first_seen_cycle: Dict[tuple[str, str], int] = {}
         self._pair_last_seen_cycle: Dict[tuple[str, str], int] = {}
@@ -99,6 +102,7 @@ class SdnDdosController(app_manager.OSKenApp):
             disconnected_ips = self._hosts.ips_for_switch(datapath.id)
             for ip in disconnected_ips:
                 self._destination_detectors.pop(ip, None)
+                self._destination_entropy_detectors.pop(ip, None)
                 self._destination_anomaly_start.pop(ip, None)
                 self._destination_candidates.pop(ip, None)
             for pair in list(self._pair_first_seen_cycle):
@@ -228,21 +232,48 @@ class SdnDdosController(app_manager.OSKenApp):
         for dst in sorted(destinations):
             if self._blocklist.is_blocked(dst):
                 continue
-            total_pps = sum(
-                rate.pps for (_src, target), rate in active_rates.items()
+            destination_rates = {
+                src: rate for (src, target), rate in active_rates.items()
                 if target == dst
-            )
+            }
+            total_pps = sum(rate.pps for rate in destination_rates.values())
+            total_bps = sum(rate.bps for rate in destination_rates.values())
+            source_packet_counts = {
+                src: rate.delta_packets
+                for src, rate in destination_rates.items()
+                if rate.delta_packets > 0
+            }
+
             detector = self._destination_detectors.setdefault(
                 dst, DestinationPpsDetector(self._config)
             )
             detection = detector.evaluate(total_pps)
-            if detection.status is DetectionStatus.ANOMALY:
-                self._stats.detections += 1
-            self._reporter.destination_result(
-                dst, total_pps, detection, self._config.required_anomalies
+
+            entropy_detector = self._destination_entropy_detectors.setdefault(
+                dst, DestinationEntropyDetector(self._config)
+            )
+            entropy_result = entropy_detector.evaluate(
+                source_packet_counts,
+                # Uma janela de PPS anômalo não deve contaminar a baseline de H.
+                update_baseline=(detection.status is not DetectionStatus.ANOMALY),
             )
 
             if detection.status is DetectionStatus.ANOMALY:
+                self._stats.detections += 1
+                if entropy_result.anomalous:
+                    self._stats.distributed_events += 1
+                else:
+                    self._stats.concentrated_events += 1
+
+            self._reporter.destination_result(
+                dst, total_pps, total_bps, detection, entropy_result,
+                self._config.required_anomalies,
+            )
+
+            if detection.status is DetectionStatus.ANOMALY:
+                self._reporter.destination_classification(
+                    dst, entropy_result, entropy_result.anomalous
+                )
                 start_cycle = self._destination_anomaly_start.setdefault(dst, cycle)
                 candidates = self._destination_candidates.setdefault(dst, set())
                 # Só considera origens que começaram a contribuir na janela
@@ -254,7 +285,9 @@ class SdnDdosController(app_manager.OSKenApp):
 
                 if detection.should_block:
                     blocked_any = False
-                    for src in sorted(candidates):
+                    candidate_list = sorted(candidates)
+                    self._reporter.destination_candidates(dst, candidate_list)
+                    for src in candidate_list:
                         if self._blocklist.is_blocked(src):
                             continue
                         datapath = self._datapath_for_ip(src)
