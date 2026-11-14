@@ -95,45 +95,39 @@ class ConsoleReporter:
         entropy: EntropyResult,
         required: int,
     ) -> None:
-        """Exibe volume agregado e distribuição das origens em linhas separadas."""
+        """Exibe PPS, bytes/s e entropia juntos em uma linha por destino."""
         if detection.status is DetectionStatus.BASELINE:
             pps_detail = "baseline %s/%s" % (detection.baseline_size, required)
         else:
-            pps_detail = (
-                "média %.2f | desvio %.2f | limite %.2f | %s"
-                % (
-                    detection.mean, detection.std, detection.limit,
-                    "ANOMALIA %s/%s" % (detection.consecutive_anomalies, required)
-                    if detection.status is DetectionStatus.ANOMALY else "NORMAL",
-                )
+            mean = "N/A" if detection.mean is None else "%.2f" % detection.mean
+            std = "N/A" if detection.std is None else "%.2f" % detection.std
+            limit = "N/A" if detection.limit is None else "%.2f" % detection.limit
+            pps_status = (
+                "ANOMALIA %s/%s" % (detection.consecutive_anomalies, required)
+                if detection.status is DetectionStatus.ANOMALY else "NORMAL"
+            )
+            pps_detail = "média %s | desvio %s | limite %s | %s" % (
+                mean, std, limit, pps_status,
             )
 
-        self._log.info(
-            "[DESTINO] %-15s | PPS agregado: %8.2f | bytes/s agregado: %10.2f | "
-            "origens ativas: %2d | %s",
-            dst, total_pps, total_bps, entropy.source_count, pps_detail,
-        )
-
-        if not entropy.baseline_ready:
-            self._log.info(
-                "[ENTROPIA] %-15s | H: %.3f bits | H normalizada: %.3f | "
-                "baseline: %s/%s",
-                dst, entropy.entropy_bits, entropy.normalized_entropy,
+        if entropy.baseline_ready:
+            entropy_mean = "N/A" if entropy.mean is None else "%.3f" % entropy.mean
+            entropy_std = "N/A" if entropy.std is None else "%.3f" % entropy.std
+            entropy_limit = "N/A" if entropy.limit is None else "%.3f" % entropy.limit
+            entropy_detail = "H média %s | H desvio %s | H limite %s | %s" % (
+                entropy_mean, entropy_std, entropy_limit,
+                "ENTROPIA ELEVADA" if entropy.anomalous else "entropia normal",
+            )
+        else:
+            entropy_detail = "H baseline %s/%s" % (
                 entropy.baseline_size, required,
             )
-            return
 
-        # Proteção adicional para evitar que um campo opcional interrompa
-        # a thread de monitoramento caso uma baseline ainda não esteja pronta.
-        mean = "N/A" if entropy.mean is None else "%.3f" % entropy.mean
-        std = "N/A" if entropy.std is None else "%.3f" % entropy.std
-        limit = "N/A" if entropy.limit is None else "%.3f" % entropy.limit
         self._log.info(
-            "[ENTROPIA] %-15s | H: %.3f bits | H normalizada: %.3f | "
-            "média: %s | desvio: %s | limite: %s bits | %s",
-            dst, entropy.entropy_bits, entropy.normalized_entropy,
-            mean, std, limit,
-            "DISTRIBUIÇÃO ELEVADA" if entropy.anomalous else "NORMAL",
+            "[DESTINO] %-15s | PPS: %8.2f (%s) | bytes/s: %10.2f | "
+            "origens: %2d | H: %.3f bits (norm. %.3f) | %s",
+            dst, total_pps, pps_detail, total_bps, entropy.source_count,
+            entropy.entropy_bits, entropy.normalized_entropy, entropy_detail,
         )
 
     def destination_classification(
@@ -211,6 +205,14 @@ class ConsoleReporter:
 
     def block_expired(self, ip: str) -> None:
         self._log.info("[BLOQUEIO EXPIRADO] %s - tráfego novamente permitido.", ip)
+
+    def blocked_ips(self, ips: List[str]) -> None:
+        """Exibe em todo ciclo os IPs bloqueados nas duas direções."""
+        values = ", ".join(ips) if ips else "nenhum"
+        self._log.info(
+            "[IPS BLOQUEADOS] Origens (envio): %s | Destinos (recebimento): %s",
+            values, values,
+        )
 
     def summary(self, stats: ControllerStats, switches: int, blocked_ips: int) -> None:
         self._log.info(_box("RESUMO DO CONTROLADOR", [
