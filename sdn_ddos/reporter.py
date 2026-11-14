@@ -209,10 +209,7 @@ class ConsoleReporter:
     def blocked_ips(self, ips: List[str]) -> None:
         """Exibe em todo ciclo os IPs bloqueados nas duas direções."""
         values = ", ".join(ips) if ips else "nenhum"
-        self._log.info(
-            "[IPS BLOQUEADOS] Origens (envio): %s | Destinos (recebimento): %s",
-            values, values,
-        )
+        self._log.info("[IPS BLOQUEADOS] %s", values)
 
     def summary(self, stats: ControllerStats, switches: int, blocked_ips: int) -> None:
         self._log.info(_box("RESUMO DO CONTROLADOR", [
