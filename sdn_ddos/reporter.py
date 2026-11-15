@@ -27,6 +27,11 @@ class ConsoleReporter:
 
     def __init__(self, logger: Optional[logging.Logger] = None) -> None:
         self._log = logger or logging.getLogger(LOGGER_NAME)
+        self._pending: list[tuple[int, str, tuple]] = []
+
+    def _queue(self, level: int, message: str, *args: object) -> None:
+        """Armazena eventos e métricas até o próximo relatório periódico."""
+        self._pending.append((level, message, args))
 
     def banner(self, config: DetectorConfig) -> None:
         self._log.info(_box("SDN DDoS DETECTION CONTROLLER", [
@@ -42,13 +47,13 @@ class ConsoleReporter:
         ], fill="="))
 
     def switch_connected(self, dpid: int) -> None:
-        self._log.info("[SWITCH] Switch %s conectado (OpenFlow 1.3); table-miss instalada", dpid)
+        self._queue(logging.INFO, "[SWITCH] Switch %s conectado (OpenFlow 1.3); table-miss instalada", dpid)
 
     def switch_registered(self, dpid: int) -> None:
-        self._log.info("[SWITCH] Datapath %s registrado para monitoramento", dpid)
+        self._queue(logging.INFO, "[SWITCH] Datapath %s registrado para monitoramento", dpid)
 
     def switch_disconnected(self, dpid: int) -> None:
-        self._log.warning("[SWITCH] Datapath %s desconectado", dpid)
+        self._queue(logging.WARNING, "[SWITCH] Datapath %s desconectado", dpid)
 
     def pair_result(
         self, src: str, dst: str, rate: PortRate,
@@ -79,7 +84,7 @@ class ConsoleReporter:
                     icmp_stats["lost"], rtt_info,
                 )
             )
-        self._log.info(
+        self._queue(logging.INFO, 
             "[PAR] Origem: %-15s | Destino: %-15s | PPS: %7.2f | "
             "bytes/s: %10.2f (%s) | Pkts: %-5s%s",
             src, dst, rate.pps, rate.bps,
@@ -123,7 +128,7 @@ class ConsoleReporter:
                 entropy.baseline_size, required,
             )
 
-        self._log.info(
+        self._queue(logging.INFO, 
             "[DESTINO] %-15s | PPS: %8.2f (%s) | bytes/s: %10.2f | "
             "origens: %2d | H: %.3f bits (norm. %.3f) | %s",
             dst, total_pps, pps_detail, total_bps, entropy.source_count,
@@ -139,7 +144,7 @@ class ConsoleReporter:
             if distributed
             else "PADRÃO CONCENTRADO/INCONCLUSIVO (possível DoS)"
         )
-        self._log.warning(
+        self._queue(logging.WARNING, 
             "[CLASSIFICAÇÃO] Destino: %s | %s | origens: %d | "
             "entropia: %.3f bits | normalizada: %.3f",
             dst, pattern, entropy.source_count,
@@ -147,76 +152,99 @@ class ConsoleReporter:
         )
 
     def destination_candidates(self, dst: str, candidates: List[str]) -> None:
-        self._log.warning(
+        self._queue(logging.WARNING, 
             "[ATRIBUIÇÃO] Destino: %s | novas origens candidatas: %s",
             dst, ", ".join(candidates) if candidates else "nenhuma",
         )
 
     def destination_without_attribution(self, dst: str) -> None:
-        self._log.warning(
+        self._queue(logging.WARNING, 
             "[MITIGAÇÃO] Destino %s excedeu o limite, mas nenhuma origem nova "
             "foi identificada; nenhum IP foi bloqueado.",
             dst,
         )
 
     def blocked_traffic(self, src: str, dst: str, rate: PortRate) -> None:
-        self._log.warning(
+        self._queue(logging.WARNING, 
             "[TRÁFEGO DESCARTADO - ORIGEM BLOQUEADA] Origem: %-15s | "
             "Destino: %-15s | PPS: %7.2f | bytes/s: %10.2f",
             src, dst, rate.pps, rate.bps,
         )
 
     def blocked_destination_traffic(self, src: str, dst: str, rate: PortRate) -> None:
-        self._log.warning(
+        self._queue(logging.WARNING, 
             "[TRÁFEGO DESCARTADO - DESTINO BLOQUEADO] Origem: %-15s | "
             "Destino: %-15s | PPS: %7.2f | bytes/s: %10.2f",
             src, dst, rate.pps, rate.bps,
         )
 
     def baseline(self, pair_id: str, detection: Detection, required: int) -> None:
-        self._log.info(
+        self._queue(logging.INFO, 
             "[BASELINE] %-34s Amostra %s/%s | PPS: %.2f",
             pair_id, detection.baseline_size, required, detection.pps,
         )
 
     def normal(self, pair_id: str, detection: Detection) -> None:
-        self._log.info("[ANÁLISE] %-34s PPS: %6.2f | Status: NORMAL", pair_id, detection.pps)
+        self._queue(logging.INFO, "[ANÁLISE] %-34s PPS: %6.2f | Status: NORMAL", pair_id, detection.pps)
 
     def anomaly(
         self, pair_id: str, detection: Detection, required: int, metric: str = "PPS"
     ) -> None:
-        self._log.warning(
+        self._queue(logging.WARNING, 
             "[MITIGAÇÃO] Anomalia de %s em %s; sequência %s/%s.",
             metric, pair_id, detection.consecutive_anomalies, required,
         )
 
     def global_limits(self, metric: str, mean: float, std: float, limit: float) -> None:
-        self._log.info(
+        self._queue(logging.INFO, 
             "[LIMITES GLOBAIS] %s | Média: %.2f %s | Desvio: %.2f %s | Limite: %.2f %s",
             metric, mean, metric, std, metric, limit, metric,
         )
 
     def block_activated(self, ip: str, duration: int) -> None:
-        self._log.warning(
+        self._queue(logging.WARNING, 
             "[BLOQUEIO ATIVADO] IP %s bloqueado para ENVIAR e RECEBER por %ss "
             "(prioridade OpenFlow %s).",
             ip, duration, BLOCK_PRIORITY,
         )
 
     def block_expired(self, ip: str) -> None:
-        self._log.info("[BLOQUEIO EXPIRADO] %s - tráfego novamente permitido.", ip)
+        self._queue(logging.INFO, "[BLOQUEIO EXPIRADO] %s - tráfego novamente permitido.", ip)
 
     def blocked_ips(self, ips: List[str]) -> None:
         """Exibe em todo ciclo os IPs bloqueados nas duas direções."""
         values = ", ".join(ips) if ips else "nenhum"
-        self._log.info("[IPS BLOQUEADOS] %s", values)
+        self._queue(logging.INFO, "[IPS BLOQUEADOS] %s", values)
 
-    def summary(self, stats: ControllerStats, switches: int, blocked_ips: int) -> None:
-        self._log.info(_box("RESUMO DO CONTROLADOR", [
-            f"Switches conectados        : {switches}",
-            f"Detecções                   : {stats.detections}",
-            f"Janelas anômalas distribuídas: {stats.distributed_events}",
-            f"Janelas anômalas concentradas: {stats.concentrated_events}",
-            f"Bloqueios                   : {stats.blocks}",
-            f"IPs bloqueados              : {blocked_ips}",
-        ]))
+    def baseline_started(self, dst: str, samples: int) -> None:
+        self._queue(
+            logging.INFO,
+            "[BASELINE] Iniciada para o novo destino %s: coleta de %s ciclos",
+            dst, samples,
+        )
+
+    def report(
+        self, elapsed: float, stats: ControllerStats, switches: int,
+        blocked_ips: List[str],
+    ) -> None:
+        """Despeja em lote os acontecimentos desde o relatório anterior."""
+        self._log.info(_box(
+            "RELATÓRIO DOS ÚLTIMOS %.1f SEGUNDOS" % elapsed,
+            [
+                f"Switches conectados         : {switches}",
+                f"Janelas anômalas de PPS     : {stats.detections}",
+                f"Eventos distribuídos       : {stats.distributed_events}",
+                f"Eventos concentrados       : {stats.concentrated_events}",
+                f"Bloqueios realizados        : {stats.blocks}",
+                f"IPs atualmente bloqueados   : {len(blocked_ips)}",
+            ],
+            fill="=",
+        ))
+        if not self._pending:
+            self._log.info("[RELATÓRIO] Nenhum evento ou tráfego reportável no período.")
+        else:
+            for level, message, args in self._pending:
+                self._log.log(level, message, *args)
+        values = ", ".join(blocked_ips) if blocked_ips else "nenhum"
+        self._log.info("[IPS BLOQUEADOS] %s", values)
+        self._pending.clear()
