@@ -168,6 +168,21 @@ def test_connection_detector_flags_one_outlier_against_current_peer_mean_std():
     assert second["10.0.0.10"]["BYTES/S"].should_block
 
 
+def test_dos_can_be_detected_with_two_active_origins():
+    detector = DestinationConnectionDetector(make_config())
+    rates = {
+        "10.0.0.1": connection(10, 100),
+        "10.0.0.2": connection(30, 300),
+    }
+
+    first = detector.evaluate(rates, 1)
+    second = detector.evaluate(rates, 2)
+
+    assert first["10.0.0.2"]["PPS"].status is DetectionStatus.ANOMALY
+    assert second["10.0.0.2"]["PPS"].should_block
+    assert second["10.0.0.2"]["BYTES/S"].should_block
+
+
 def test_uniform_increase_is_not_individual_dos():
     detector = DestinationConnectionDetector(make_config())
     normal = {f"10.0.0.{i}": connection(10, 100) for i in range(1, 11)}
