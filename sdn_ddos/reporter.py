@@ -41,7 +41,7 @@ class ConsoleReporter:
             f"Limiar PPS                : média + {config.threshold_factor:g}σ",
             f"Piso mínimo PPS           : {config.minimum_pps:g}",
             f"Limiar de entropia        : média + {config.entropy_threshold_factor:g}σ",
-            f"Incremento mínimo H       : {config.minimum_entropy_delta:g} bits",
+            f"Fator mínimo de entropia  : {config.minimum_entropy_factor:g}x a média",
             f"Mínimo de origens p/ DDoS : {config.minimum_distributed_sources}",
             f"Janelas para confirmação  : {config.required_anomalies}",
             f"Tempo de bloqueio         : {config.block_time}s",
