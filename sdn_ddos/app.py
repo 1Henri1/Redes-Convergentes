@@ -373,21 +373,39 @@ class SdnDdosController(app_manager.OSKenApp):
                 detector = DestinationPpsDetector(self._config)
                 self._destination_detectors[dst] = detector
                 self._reporter.baseline_started(dst, self._config.baseline_samples)
-            detection = detector.evaluate(total_pps)
+            connection_pps_anomalous = any(
+                result["PPS"].status is DetectionStatus.ANOMALY
+                for result in connection_results.values()
+            )
+            connection_bytes_anomalous = any(
+                result["BYTES/S"].status is DetectionStatus.ANOMALY
+                for result in connection_results.values()
+            )
+            detection = detector.evaluate(
+                total_pps, update_baseline=not connection_pps_anomalous
+            )
 
-            # O bytes/s possui baseline e limite independentes; sua anomalia
-            # também participa da decisão de bloqueio.
+            # O histórico agregado também ignora ciclos com anomalia individual.
             bytes_detector = self._destination_bytes_detectors.get(dst)
             if bytes_detector is None:
                 bytes_detector = DestinationPpsDetector(self._config)
                 self._destination_bytes_detectors[dst] = bytes_detector
-            bytes_detection = bytes_detector.evaluate(total_bps, minimum_rate=0.0)
+            bytes_detection = bytes_detector.evaluate(
+                total_bps, minimum_rate=0.0,
+                update_baseline=not connection_bytes_anomalous,
+            )
 
             entropy_detector = self._destination_entropy_detectors.setdefault(
                 dst, DestinationEntropyDetector(self._config)
             )
-            pps_anomalous = detection.status is DetectionStatus.ANOMALY
-            bytes_anomalous = bytes_detection.status is DetectionStatus.ANOMALY
+            pps_anomalous = (
+                detection.status is DetectionStatus.ANOMALY
+                or connection_pps_anomalous
+            )
+            bytes_anomalous = (
+                bytes_detection.status is DetectionStatus.ANOMALY
+                or connection_bytes_anomalous
+            )
             entropy_result = entropy_detector.evaluate(
                 source_packet_counts,
                 # Uma janela anômala de PPS ou bytes/s não contamina a baseline de H.
