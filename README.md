@@ -81,10 +81,11 @@ A mitigação bloqueia somente origens cuja própria conexão apresente anomalia
 Exemplo ilustrativo das mensagens durante uma anomalia. PPS, bytes/s e entropia são apresentados juntos na linha do destino; a lista de IPs bloqueados é exibida em todos os ciclos, mesmo vazia:
 
 ```text
+[CONEXÃO] 10.0.0.3 -> 10.0.0.10 | PPS 30.00 (média 10.00 | desvio 0.00 | limite 15.00 | ANOMALIA 1/2) | bytes/s 300.00 (média 100.00 | desvio 0.00 | limite 150.00 | ANOMALIA 1/2)
 [DESTINO] 10.0.0.10 | PPS: 145.00 (média 30.00 | desvio 5.00 | limite 45.00 | ANOMALIA 1/2) | bytes/s: 8120.00 | origens: 6 | H: 2.400 bits (norm. 0.930) | H média 0.500 | H desvio 0.250 | H limite 1.250 | ENTROPIA ELEVADA
 [IPS BLOQUEADOS] Origens (envio): 10.0.0.3 | Destinos (recebimento): 10.0.0.3
 [CLASSIFICAÇÃO] Destino: 10.0.0.10 | PADRÃO DISTRIBUÍDO (possível DDoS) | origens: 6 | entropia: 2.400 bits | normalizada: 0.930
-[ATRIBUIÇÃO] Destino: 10.0.0.10 | novas origens candidatas: 10.0.0.3, 10.0.0.4
+[ATRIBUIÇÃO] Destino: 10.0.0.10 | gatilho: PPS E/OU BYTES/S POR CONEXÃO | origens identificadas: 10.0.0.3
 [BLOQUEIO ATIVADO] IP 10.0.0.3 bloqueado para ENVIAR e RECEBER por 30s (prioridade OpenFlow 100).
 ```
 
