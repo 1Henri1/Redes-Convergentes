@@ -171,6 +171,34 @@ class ConsoleReporter:
             entropy.entropy_bits, entropy.normalized_entropy, entropy_detail,
         )
 
+    def connection_result(
+        self, src: str, dst: str, rate: PortRate,
+        pps: Detection, byte_rate: Detection, required: int,
+    ) -> None:
+        """Exibe as taxas individuais e seus limites calculados pelos pares."""
+        def detail(result: Detection) -> str:
+            if result.status is DetectionStatus.BASELINE:
+                return "referência em formação (%d pares)" % result.baseline_size
+            mean = 0.0 if result.mean is None else result.mean
+            std = 0.0 if result.std is None else result.std
+            limit = 0.0 if result.limit is None else result.limit
+            status = (
+                "ANOMALIA %d/%d" % (result.consecutive_anomalies, required)
+                if result.status is DetectionStatus.ANOMALY else "NORMAL"
+            )
+            return "média %.2f | desvio %.2f | limite %.2f | %s" % (
+                mean, std, limit, status
+            )
+
+        self._queue(
+            logging.WARNING if (
+                pps.status is DetectionStatus.ANOMALY
+                or byte_rate.status is DetectionStatus.ANOMALY
+            ) else logging.INFO,
+            "[CONEXÃO] %s -> %s | PPS %.2f (%s) | bytes/s %.2f (%s)",
+            src, dst, rate.pps, detail(pps), rate.bps, detail(byte_rate),
+        )
+
     def destination_classification(
         self, dst: str, entropy: EntropyResult, distributed: bool
     ) -> None:
