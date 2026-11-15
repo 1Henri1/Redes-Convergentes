@@ -106,69 +106,32 @@ class ConsoleReporter:
         )
 
     def destination_result(
-        self,
-        dst: str,
-        total_pps: float,
-        total_bps: float,
-        detection: Detection,
-        bytes_detection: Detection,
-        entropy: EntropyResult,
-        required: int,
+        self, dst: str, total_pps: float, total_bps: float, source_count: int,
+        pps_mean: float, pps_std: float, bytes_mean: float, bytes_std: float,
+        entropy: EntropyResult, required: int,
     ) -> None:
-        """Exibe PPS, bytes/s e entropia juntos em uma linha por destino."""
-        if detection.status is DetectionStatus.BASELINE:
-            pps_detail = "coleta inicial"
-        else:
-            mean = "N/A" if detection.mean is None else "%.2f" % detection.mean
-            std = "N/A" if detection.std is None else "%.2f" % detection.std
-            limit = "N/A" if detection.limit is None else "%.2f" % detection.limit
-            pps_status = (
-                "ANOMALIA %s/%s" % (detection.consecutive_anomalies, required)
-                if detection.status is DetectionStatus.ANOMALY else "NORMAL"
-            )
-            pps_detail = "média %s | desvio %s | limite %s | %s" % (
-                mean, std, limit, pps_status,
-            )
-
-        if bytes_detection.status is DetectionStatus.BASELINE:
-            bytes_detail = "baseline em coleta %s/%s" % (
-                bytes_detection.baseline_size, required,
-            )
-        else:
-            bytes_mean = "N/A" if bytes_detection.mean is None else "%.2f" % bytes_detection.mean
-            bytes_std = "N/A" if bytes_detection.std is None else "%.2f" % bytes_detection.std
-            bytes_limit = "N/A" if bytes_detection.limit is None else "%.2f" % bytes_detection.limit
-            bytes_status = (
-                "ANOMALIA %s/%s" % (bytes_detection.consecutive_anomalies, required)
-                if bytes_detection.status is DetectionStatus.ANOMALY else "NORMAL"
-            )
-            bytes_detail = "média %s | desvio %s | limite %s | %s" % (
-                bytes_mean, bytes_std, bytes_limit, bytes_status,
-            )
-
+        """Exibe totais e estatísticas transversais das origens do destino."""
         if entropy.baseline_ready:
             entropy_mean = "N/A" if entropy.mean is None else "%.3f" % entropy.mean
             entropy_std = "N/A" if entropy.std is None else "%.3f" % entropy.std
             entropy_limit = "N/A" if entropy.limit is None else "%.3f" % entropy.limit
             entropy_status = (
-                "ENTROPIA ELEVADA %s/%s" % (
-                    entropy.consecutive_anomalies, required,
-                )
-                if entropy.anomalous else "entropia normal"
+                "DDoS %s/%s" % (entropy.consecutive_anomalies, required)
+                if entropy.anomalous else "normal"
             )
             entropy_detail = "H média %s | H desvio %s | H limite %s | %s" % (
                 entropy_mean, entropy_std, entropy_limit, entropy_status,
             )
         else:
-            entropy_detail = "H baseline %s/%s" % (
-                entropy.baseline_size, required,
-            )
+            entropy_detail = "H baseline %s/%s" % (entropy.baseline_size, required)
 
-        self._queue(logging.INFO, 
-            "[DESTINO] %-15s | PPS: %8.2f (%s) | bytes/s: %10.2f (%s) | "
+        self._queue(
+            logging.INFO,
+            "[DESTINO] %-15s | PPS total: %8.2f (média/origem %.2f | desvio %.2f) | "
+            "bytes/s total: %10.2f (média/origem %.2f | desvio %.2f) | "
             "origens: %2d | H: %.3f bits (norm. %.3f) | %s",
-            dst, total_pps, pps_detail, total_bps, bytes_detail, entropy.source_count,
-            entropy.entropy_bits, entropy.normalized_entropy, entropy_detail,
+            dst, total_pps, pps_mean, pps_std, total_bps, bytes_mean, bytes_std,
+            source_count, entropy.entropy_bits, entropy.normalized_entropy, entropy_detail,
         )
 
     def connection_result(
