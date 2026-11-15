@@ -85,7 +85,7 @@ def test_entropy_spike_requests_block_after_required_consecutive_windows():
     detector = DestinationEntropyDetector(
         DetectorConfig(
             baseline_samples=3, history_size=10, required_anomalies=2,
-            minimum_entropy_delta=0.25,
+            minimum_entropy_factor=1.5,
         )
     )
     for _ in range(3):
@@ -109,7 +109,7 @@ def test_normal_entropy_resets_anomaly_streak():
     detector = DestinationEntropyDetector(
         DetectorConfig(
             baseline_samples=2, history_size=10, required_anomalies=2,
-            minimum_entropy_delta=0.25,
+            minimum_entropy_factor=1.5,
         )
     )
     detector.evaluate({"10.0.0.1": 10})
