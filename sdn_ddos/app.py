@@ -275,6 +275,7 @@ class SdnDdosController(app_manager.OSKenApp):
 
         rates = self._rates.collect_rates()
         active_rates: Dict[tuple[str, str], Any] = {}
+        pair_bps_results: Dict[tuple[str, str], Detection] = {}
         for (src, dst), rate in rates.items():
             src_blocked = self._blocklist.is_blocked(src)
             dst_blocked = self._blocklist.is_blocked(dst)
@@ -292,7 +293,9 @@ class SdnDdosController(app_manager.OSKenApp):
             self._pair_last_seen_cycle[pair] = cycle
             datapath = self._datapath_for_ip(src)
             if datapath is not None:
-                self._process_pair_rate(datapath, src, dst, rate, icmp_interval.get((src, dst)))
+                pair_bps_results[(src, dst)] = self._process_pair_rate(
+                    datapath, src, dst, rate, icmp_interval.get((src, dst))
+                )
 
         self._known_destinations.update(dst for (_src, dst) in active_rates)
         destinations = self._known_destinations | set(self._destination_detectors)
@@ -333,7 +336,18 @@ class SdnDdosController(app_manager.OSKenApp):
             dos_sources = set()
             for src, metrics in connection_results.items():
                 pps_result, bytes_result = metrics["PPS"], metrics["BYTES/S"]
-                if pps_result.should_block or bytes_result.should_block:
+                # A decisão de bloqueio também considera a mesma detecção
+                # individual de bytes/s exibida em [PAR]. Antes, esse detector
+                # podia registrar 2/2 sem que o resultado chegasse ao bloqueio.
+                pair_bytes_result = pair_bps_results.get((src, dst))
+                if (
+                    pps_result.should_block
+                    or bytes_result.should_block
+                    or (
+                        pair_bytes_result is not None
+                        and pair_bytes_result.should_block
+                    )
+                ):
                     dos_sources.add(src)
 
             # DDoS: somente a entropia classifica/confirma um ataque distribuído.
@@ -531,8 +545,8 @@ class SdnDdosController(app_manager.OSKenApp):
     def _process_pair_rate(
         self, datapath: Any, src: str, dst: str, rate: Any,
         icmp_stats: Dict[str, float] | None = None,
-    ) -> None:
-        """Exibe PPS por par e mantém a análise auxiliar de bytes/s."""
+    ) -> Detection:
+        """Exibe e retorna a detecção de bytes/s para alimentar a mitigação."""
         pair_id = "{}->{}".format(src, dst)
         bps_detection = self._bps_detector.evaluate(
             pair_id, rate.bps, minimum_rate=0.0
@@ -546,6 +560,7 @@ class SdnDdosController(app_manager.OSKenApp):
             self._reporter.anomaly(
                 pair_id, bps_detection, self._config.required_anomalies, "bytes/s"
             )
+        return bps_detection
 
     def _block(self, datapath: Any, ip: str) -> None:
         """Aplica o bloqueio no switch e o registra no controlador."""
