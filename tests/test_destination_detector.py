@@ -115,3 +115,27 @@ def test_new_destination_collects_five_real_baseline_cycles():
     assert result.status is DetectionStatus.ANOMALY
     assert result.mean == pytest.approx(0)
     assert result.limit == pytest.approx(10)
+
+
+def test_bytes_detector_uses_relative_limit_without_absolute_pps_floor():
+    detector = DestinationPpsDetector(make_config(minimum_pps=10.0))
+    train(detector, [10000, 10000, 10000, 10000, 10000])
+
+    first = detector.evaluate(20000, minimum_rate=0.0)
+    second = detector.evaluate(20000, minimum_rate=0.0)
+
+    assert first.status is DetectionStatus.ANOMALY
+    assert first.limit == pytest.approx(15000)
+    assert not first.should_block
+    assert second.status is DetectionStatus.ANOMALY
+    assert second.should_block
+
+
+def test_bytes_detector_does_not_use_pps_absolute_floor():
+    detector = DestinationPpsDetector(make_config(minimum_pps=10.0))
+    train(detector, [2, 2, 2, 2, 2])
+
+    result = detector.evaluate(3.0, minimum_rate=0.0)
+
+    assert result.status is DetectionStatus.NORMAL
+    assert result.limit == pytest.approx(3.0)
