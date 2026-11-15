@@ -108,6 +108,7 @@ class ConsoleReporter:
     def destination_result(
         self, dst: str, total_pps: float, total_bps: float, source_count: int,
         pps_mean: float, pps_std: float, bytes_mean: float, bytes_std: float,
+        pps_limit: float, bytes_limit: float,
         entropy: EntropyResult, required: int,
     ) -> None:
         """Exibe totais e estatísticas transversais das origens do destino."""
@@ -127,39 +128,12 @@ class ConsoleReporter:
 
         self._queue(
             logging.INFO,
-            "[DESTINO] %-15s | PPS total: %8.2f (média/origem %.2f | desvio %.2f) | "
-            "bytes/s total: %10.2f (média/origem %.2f | desvio %.2f) | "
+            "[DESTINO] %-15s | PPS total: %8.2f (média %.2f | desvio %.2f | limite %.2f) | "
+            "bytes/s total: %10.2f (média %.2f | desvio %.2f | limite %.2f) | "
             "origens: %2d | H: %.3f bits (norm. %.3f) | %s",
-            dst, total_pps, pps_mean, pps_std, total_bps, bytes_mean, bytes_std,
+            dst, total_pps, pps_mean, pps_std, pps_limit,
+            total_bps, bytes_mean, bytes_std, bytes_limit,
             source_count, entropy.entropy_bits, entropy.normalized_entropy, entropy_detail,
-        )
-
-    def connection_result(
-        self, src: str, dst: str, rate: PortRate,
-        pps: Detection, byte_rate: Detection, required: int,
-    ) -> None:
-        """Exibe as taxas individuais e seus limites calculados pelos pares."""
-        def detail(result: Detection) -> str:
-            if result.status is DetectionStatus.BASELINE:
-                return "referência em formação (%d pares)" % result.baseline_size
-            mean = 0.0 if result.mean is None else result.mean
-            std = 0.0 if result.std is None else result.std
-            limit = 0.0 if result.limit is None else result.limit
-            status = (
-                "ANOMALIA %d/%d" % (result.consecutive_anomalies, required)
-                if result.status is DetectionStatus.ANOMALY else "NORMAL"
-            )
-            return "média %.2f | desvio %.2f | limite %.2f | %s" % (
-                mean, std, limit, status
-            )
-
-        self._queue(
-            logging.WARNING if (
-                pps.status is DetectionStatus.ANOMALY
-                or byte_rate.status is DetectionStatus.ANOMALY
-            ) else logging.INFO,
-            "[CONEXÃO] %s -> %s | PPS %.2f (%s) | bytes/s %.2f (%s)",
-            src, dst, rate.pps, detail(pps), rate.bps, detail(byte_rate),
         )
 
     def destination_classification(
