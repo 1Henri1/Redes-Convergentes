@@ -53,6 +53,8 @@ class SdnDdosController(app_manager.OSKenApp):
         self._bps_detector = AnomalyDetector(self._config)
         # Cada servidor mantém sua própria baseline de PPS agregado recebido.
         self._destination_detectors: Dict[str, DestinationPpsDetector] = {}
+        # Baseline agregada de bytes/s por destino; apenas informativa, não bloqueia.
+        self._destination_bytes_detectors: Dict[str, DestinationPpsDetector] = {}
         # Apenas IPs que já foram observados como receptores entram no relatório agregado.
         self._known_destinations: set[str] = set()
         # Quantos ciclos consecutivos cada destino permaneceu com PPS = 0.
@@ -318,6 +320,7 @@ class SdnDdosController(app_manager.OSKenApp):
                 )
                 if self._destination_zero_cycles[dst] >= 2:
                     self._destination_detectors.pop(dst, None)
+                    self._destination_bytes_detectors.pop(dst, None)
                     self._destination_entropy_detectors.pop(dst, None)
                     self._known_destinations.discard(dst)
                     self._destination_zero_cycles.pop(dst, None)
@@ -344,6 +347,14 @@ class SdnDdosController(app_manager.OSKenApp):
                 self._destination_detectors[dst] = detector
                 self._reporter.baseline_started(dst, self._config.baseline_samples)
             detection = detector.evaluate(total_pps)
+
+            # O limite de bytes/s é calculado separadamente e exibido como
+            # contexto; ele não participa do acionamento de bloqueios.
+            bytes_detector = self._destination_bytes_detectors.get(dst)
+            if bytes_detector is None:
+                bytes_detector = DestinationPpsDetector(self._config)
+                self._destination_bytes_detectors[dst] = bytes_detector
+            bytes_detection = bytes_detector.evaluate(total_bps, minimum_rate=0.0)
 
             entropy_detector = self._destination_entropy_detectors.setdefault(
                 dst, DestinationEntropyDetector(self._config)
@@ -372,8 +383,8 @@ class SdnDdosController(app_manager.OSKenApp):
                 )
             else:
                 self._reporter.destination_result(
-                    dst, total_pps, total_bps, detection, entropy_result,
-                    self._config.required_anomalies,
+                    dst, total_pps, total_bps, detection, bytes_detection,
+                    entropy_result, self._config.required_anomalies,
                 )
 
             if pps_anomalous or entropy_anomalous:
