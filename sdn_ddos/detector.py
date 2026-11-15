@@ -158,7 +158,7 @@ class DestinationConnectionDetector:
     ) -> Dict[str, Dict[str, Detection]]:
         """Avalia cada origem com referências anteriores, sem auto-inclusão."""
         expired = [
-            src for src, seen in self._last_seen.items() if cycle - seen > 2
+            src for src, seen in self._last_seen.items() if cycle - seen >= 2
         ]
         for src in expired:
             self._normal_pps.pop(src, None)
