@@ -108,6 +108,7 @@ class SdnDdosController(app_manager.OSKenApp):
             disconnected_ips = self._hosts.ips_for_switch(datapath.id)
             for ip in disconnected_ips:
                 self._destination_detectors.pop(ip, None)
+                self._destination_bytes_detectors.pop(ip, None)
                 self._known_destinations.discard(ip)
                 self._destination_zero_cycles.pop(ip, None)
                 self._destination_entropy_detectors.pop(ip, None)
@@ -359,15 +360,16 @@ class SdnDdosController(app_manager.OSKenApp):
             entropy_detector = self._destination_entropy_detectors.setdefault(
                 dst, DestinationEntropyDetector(self._config)
             )
+            pps_anomalous = detection.status is DetectionStatus.ANOMALY
+            bytes_anomalous = bytes_detection.status is DetectionStatus.ANOMALY
             entropy_result = entropy_detector.evaluate(
                 source_packet_counts,
-                # Uma janela de PPS anômalo não deve contaminar a baseline de H.
-                update_baseline=(detection.status is not DetectionStatus.ANOMALY),
+                # Uma janela anômala de PPS ou bytes/s não contamina a baseline de H.
+                update_baseline=not (pps_anomalous or bytes_anomalous),
             )
 
-            pps_anomalous = detection.status is DetectionStatus.ANOMALY
             entropy_anomalous = entropy_result.anomalous
-            if pps_anomalous or entropy_anomalous:
+            if pps_anomalous or bytes_anomalous or entropy_anomalous:
                 self._stats.detections += 1
                 if entropy_anomalous:
                     self._stats.distributed_events += 1
@@ -387,8 +389,8 @@ class SdnDdosController(app_manager.OSKenApp):
                     entropy_result, self._config.required_anomalies,
                 )
 
-            if pps_anomalous or entropy_anomalous:
-                # PPS e entropia podem iniciar a atribuição independentemente.
+            if pps_anomalous or bytes_anomalous or entropy_anomalous:
+                # PPS, bytes/s e entropia podem iniciar a atribuição independentemente.
                 # Só entram como candidatas origens que surgiram durante a
                 # janela anômala, preservando emissores estáveis anteriores.
                 self._reporter.destination_classification(
@@ -403,8 +405,22 @@ class SdnDdosController(app_manager.OSKenApp):
                     ):
                         candidates.add(src)
 
-                if detection.should_block or entropy_result.should_block:
-                    trigger = "ENTROPIA" if entropy_result.should_block else "PPS"
+                if bytes_anomalous and destination_rates:
+                    # Para uma elevação de volume, atribui o evento à origem
+                    # que mais contribuiu em bytes/s, mesmo que já fosse ativa.
+                    top_source = max(
+                        destination_rates.items(), key=lambda item: item[1].bps
+                    )
+                    if top_source[1].bps > 0:
+                        candidates.add(top_source[0])
+
+                if detection.should_block or bytes_detection.should_block or entropy_result.should_block:
+                    if entropy_result.should_block:
+                        trigger = "ENTROPIA"
+                    elif bytes_detection.should_block:
+                        trigger = "BYTES/S"
+                    else:
+                        trigger = "PPS"
                     self._reporter.destination_candidates(dst, sorted(candidates), trigger)
                     blocked_any = False
                     for src in sorted(candidates):
