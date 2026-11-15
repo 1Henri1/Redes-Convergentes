@@ -264,7 +264,9 @@ class SdnDdosController(app_manager.OSKenApp):
                 self._config.monitor_interval,
                 max(0.01, next_report - time.monotonic()),
             )
-            hub.    def _run_monitor_cycle(self, cycle: int) -> None:
+            hub.sleep(sleep_for)
+
+    def _run_monitor_cycle(self, cycle: int) -> None:
         """Avalia DoS por origem e DDoS exclusivamente pela entropia."""
         self._expire_icmp_requests()
         icmp_interval = self._report_icmp_interval()
