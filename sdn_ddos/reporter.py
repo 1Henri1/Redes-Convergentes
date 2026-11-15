@@ -133,9 +133,14 @@ class ConsoleReporter:
             entropy_mean = "N/A" if entropy.mean is None else "%.3f" % entropy.mean
             entropy_std = "N/A" if entropy.std is None else "%.3f" % entropy.std
             entropy_limit = "N/A" if entropy.limit is None else "%.3f" % entropy.limit
+            entropy_status = (
+                "ENTROPIA ELEVADA %s/%s" % (
+                    entropy.consecutive_anomalies, required,
+                )
+                if entropy.anomalous else "entropia normal"
+            )
             entropy_detail = "H média %s | H desvio %s | H limite %s | %s" % (
-                entropy_mean, entropy_std, entropy_limit,
-                "ENTROPIA ELEVADA" if entropy.anomalous else "entropia normal",
+                entropy_mean, entropy_std, entropy_limit, entropy_status,
             )
         else:
             entropy_detail = "H baseline %s/%s" % (
@@ -165,10 +170,13 @@ class ConsoleReporter:
             entropy.entropy_bits, entropy.normalized_entropy,
         )
 
-    def destination_candidates(self, dst: str, candidates: List[str]) -> None:
-        self._queue(logging.WARNING, 
-            "[ATRIBUIÇÃO] Destino: %s | novas origens candidatas: %s",
-            dst, ", ".join(candidates) if candidates else "nenhuma",
+    def destination_candidates(
+        self, dst: str, candidates: List[str], trigger: str = "PPS"
+    ) -> None:
+        self._queue(
+            logging.WARNING,
+            "[ATRIBUIÇÃO] Destino: %s | gatilho: %s | novas origens candidatas: %s",
+            dst, trigger, ", ".join(candidates) if candidates else "nenhuma",
         )
 
     def destination_without_attribution(self, dst: str) -> None:
