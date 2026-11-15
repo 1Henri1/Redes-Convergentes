@@ -138,8 +138,12 @@ class ConsoleReporter:
             bytes_mean = "N/A" if bytes_detection.mean is None else "%.2f" % bytes_detection.mean
             bytes_std = "N/A" if bytes_detection.std is None else "%.2f" % bytes_detection.std
             bytes_limit = "N/A" if bytes_detection.limit is None else "%.2f" % bytes_detection.limit
-            bytes_detail = "média %s | desvio %s | limite %s" % (
-                bytes_mean, bytes_std, bytes_limit,
+            bytes_status = (
+                "ANOMALIA %s/%s" % (bytes_detection.consecutive_anomalies, required)
+                if bytes_detection.status is DetectionStatus.ANOMALY else "NORMAL"
+            )
+            bytes_detail = "média %s | desvio %s | limite %s | %s" % (
+                bytes_mean, bytes_std, bytes_limit, bytes_status,
             )
 
         if entropy.baseline_ready:
