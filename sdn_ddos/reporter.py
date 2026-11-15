@@ -35,7 +35,8 @@ class ConsoleReporter:
 
     def banner(self, config: DetectorConfig) -> None:
         self._log.info(_box("SDN DDoS DETECTION CONTROLLER", [
-            f"Monitoramento             : {config.monitor_interval:g}s",
+            f"Intervalo de avaliação    : {config.monitor_interval:g}s",
+            f"Intervalo de relatório    : {config.report_interval:g}s",
             f"Amostras da baseline      : {config.baseline_samples}",
             f"Limiar PPS                : média + {config.threshold_factor:g}σ",
             f"Piso mínimo PPS           : {config.minimum_pps:g}",
@@ -232,7 +233,7 @@ class ConsoleReporter:
             "RELATÓRIO DOS ÚLTIMOS %.1f SEGUNDOS" % elapsed,
             [
                 f"Switches conectados         : {switches}",
-                f"Janelas anômalas de PPS     : {stats.detections}",
+                f"Detecções registradas       : {stats.detections}",
                 f"Eventos distribuídos       : {stats.distributed_events}",
                 f"Eventos concentrados       : {stats.concentrated_events}",
                 f"Bloqueios realizados        : {stats.blocks}",
