@@ -349,8 +349,8 @@ class SdnDdosController(app_manager.OSKenApp):
                 self._reporter.baseline_started(dst, self._config.baseline_samples)
             detection = detector.evaluate(total_pps)
 
-            # O limite de bytes/s é calculado separadamente e exibido como
-            # contexto; ele não participa do acionamento de bloqueios.
+            # O bytes/s possui baseline e limite independentes; sua anomalia
+            # também participa da decisão de bloqueio.
             bytes_detector = self._destination_bytes_detectors.get(dst)
             if bytes_detector is None:
                 bytes_detector = DestinationPpsDetector(self._config)
