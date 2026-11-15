@@ -143,16 +143,15 @@ class DestinationPpsDetector:
 
 
 class DestinationConnectionDetector:
-    """Detecta DoS comparando cada origem com as demais origens ativas do destino."""
+    """Detecta DoS usando os limites estatísticos globais de cada destino."""
 
-    def __init__(self, config: DetectorConfig, minimum_peers: int = 1) -> None:
+    def __init__(self, config: DetectorConfig) -> None:
         self._config = config
-        self._minimum_peers = minimum_peers
         self._last_seen: Dict[str, int] = {}
         self._streaks: Dict[Tuple[str, str], int] = defaultdict(int)
 
     def evaluate(self, rates: Dict[str, object], cycle: int) -> Dict[str, Dict[str, Detection]]:
-        """Usa média e desvio atuais das outras origens, sem incluir a origem avaliada."""
+        """Calcula média/desvio com TODAS as origens e compara cada uma aos mesmos limites."""
         expired = [src for src, seen in self._last_seen.items() if cycle - seen >= 2]
         for src in expired:
             self._last_seen.pop(src, None)
@@ -160,42 +159,48 @@ class DestinationConnectionDetector:
             self._streaks.pop((src, "BYTES/S"), None)
 
         results: Dict[str, Dict[str, Detection]] = {}
+        metrics = (
+            ("PPS", lambda rate: float(rate.pps), self._config.minimum_pps),
+            ("BYTES/S", lambda rate: float(rate.bps), 0.0),
+        )
+
+        # A referência é calculada uma vez por destino e por métrica,
+        # incluindo todas as origens ativas, inclusive a que será avaliada.
+        limits = {}
+        for metric, getter, floor in metrics:
+            values = [getter(rate) for rate in rates.values()]
+            if not values:
+                continue
+            mean = statistics.fmean(values)
+            std = statistics.stdev(values) if len(values) > 1 else 0.0
+            limit = max(
+                mean + self._config.threshold_factor * std,
+                mean * self._config.min_rate_factor,
+                floor,
+            )
+            limits[metric] = (mean, std, limit, getter)
+
         for src, rate in rates.items():
             results[src] = {}
-            for metric, value, floor in (
-                ("PPS", float(rate.pps), self._config.minimum_pps),
-                ("BYTES/S", float(rate.bps), 0.0),
-            ):
-                peers = [
-                    float(other.pps if metric == "PPS" else other.bps)
-                    for other_src, other in rates.items() if other_src != src
-                ]
-                if len(peers) < self._minimum_peers:
-                    self._streaks[(src, metric)] = 0
-                    results[src][metric] = Detection(DetectionStatus.BASELINE, value, len(peers))
+            for metric, _getter, _floor in metrics:
+                if metric not in limits:
                     continue
-
-                mean = statistics.fmean(peers)
-                std = statistics.stdev(peers) if len(peers) > 1 else 0.0
-                limit = max(
-                    mean + self._config.threshold_factor * std,
-                    mean * self._config.min_rate_factor,
-                    floor,
-                )
+                mean, std, limit, getter = limits[metric]
+                value = getter(rate)
                 key = (src, metric)
                 if value > limit:
                     streak = self._streaks[key] + 1
                     should_block = streak >= self._config.required_anomalies
                     self._streaks[key] = 0 if should_block else streak
                     results[src][metric] = Detection(
-                        DetectionStatus.ANOMALY, value, len(peers),
+                        DetectionStatus.ANOMALY, value, len(rates),
                         mean=mean, std=std, limit=limit,
                         consecutive_anomalies=streak, should_block=should_block,
                     )
                 else:
                     self._streaks[key] = 0
                     results[src][metric] = Detection(
-                        DetectionStatus.NORMAL, value, len(peers),
+                        DetectionStatus.NORMAL, value, len(rates),
                         mean=mean, std=std, limit=limit,
                     )
             self._last_seen[src] = cycle
