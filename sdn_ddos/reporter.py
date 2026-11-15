@@ -220,7 +220,7 @@ class ConsoleReporter:
     ) -> None:
         self._queue(
             logging.WARNING,
-            "[ATRIBUIÇÃO] Destino: %s | gatilho: %s | novas origens candidatas: %s",
+            "[ATRIBUIÇÃO] Destino: %s | gatilho: %s | origens identificadas: %s",
             dst, trigger, ", ".join(candidates) if candidates else "nenhuma",
         )
 
