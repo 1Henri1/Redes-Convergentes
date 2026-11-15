@@ -124,3 +124,47 @@ def test_normal_entropy_resets_anomaly_streak():
     assert not normal.anomalous
     assert last.anomalous and last.consecutive_anomalies == 1
     assert not last.should_block
+
+
+
+def test_empty_and_single_source_windows_do_not_enter_entropy_baseline():
+    detector = DestinationEntropyDetector(
+        DetectorConfig(baseline_samples=5, history_size=10)
+    )
+
+    empty = detector.evaluate({})
+    single = detector.evaluate({"10.0.0.1": 10})
+    assert empty.baseline_size == 0
+    assert single.baseline_size == 0
+    assert not empty.baseline_ready
+    assert not single.baseline_ready
+
+    result = None
+    for _ in range(5):
+        result = detector.evaluate({
+            "10.0.0.1": 10,
+            "10.0.0.2": 10,
+            "10.0.0.3": 10,
+            "10.0.0.4": 10,
+        })
+
+    assert result is not None and result.baseline_ready
+    assert result.baseline_size == 5
+    assert result.mean == pytest.approx(2.0)
+    assert result.std == pytest.approx(0.0)
+
+
+def test_baseline_completion_sample_is_not_added_twice():
+    detector = DestinationEntropyDetector(
+        DetectorConfig(baseline_samples=3, history_size=10)
+    )
+    counts = {"10.0.0.1": 10, "10.0.0.2": 10}
+
+    detector.evaluate(counts)
+    detector.evaluate(counts)
+    result = detector.evaluate(counts)
+
+    assert result.baseline_ready
+    assert result.baseline_size == 3
+    assert result.mean == pytest.approx(1.0)
+    assert result.std == pytest.approx(0.0)
