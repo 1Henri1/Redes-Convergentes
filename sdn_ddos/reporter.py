@@ -111,6 +111,7 @@ class ConsoleReporter:
         total_pps: float,
         total_bps: float,
         detection: Detection,
+        bytes_detection: Detection,
         entropy: EntropyResult,
         required: int,
     ) -> None:
@@ -127,6 +128,18 @@ class ConsoleReporter:
             )
             pps_detail = "média %s | desvio %s | limite %s | %s" % (
                 mean, std, limit, pps_status,
+            )
+
+        if bytes_detection.status is DetectionStatus.BASELINE:
+            bytes_detail = "baseline em coleta %s/%s" % (
+                bytes_detection.baseline_size, required,
+            )
+        else:
+            bytes_mean = "N/A" if bytes_detection.mean is None else "%.2f" % bytes_detection.mean
+            bytes_std = "N/A" if bytes_detection.std is None else "%.2f" % bytes_detection.std
+            bytes_limit = "N/A" if bytes_detection.limit is None else "%.2f" % bytes_detection.limit
+            bytes_detail = "média %s | desvio %s | limite %s" % (
+                bytes_mean, bytes_std, bytes_limit,
             )
 
         if entropy.baseline_ready:
@@ -148,9 +161,9 @@ class ConsoleReporter:
             )
 
         self._queue(logging.INFO, 
-            "[DESTINO] %-15s | PPS: %8.2f (%s) | bytes/s: %10.2f | "
+            "[DESTINO] %-15s | PPS: %8.2f (%s) | bytes/s: %10.2f (%s) | "
             "origens: %2d | H: %.3f bits (norm. %.3f) | %s",
-            dst, total_pps, pps_detail, total_bps, entropy.source_count,
+            dst, total_pps, pps_detail, total_bps, bytes_detail, entropy.source_count,
             entropy.entropy_bits, entropy.normalized_entropy, entropy_detail,
         )
 
