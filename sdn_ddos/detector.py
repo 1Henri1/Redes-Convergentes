@@ -145,7 +145,7 @@ class DestinationPpsDetector:
 class DestinationConnectionDetector:
     """Detecta DoS comparando cada origem com as demais origens ativas do destino."""
 
-    def __init__(self, config: DetectorConfig, minimum_peers: int = 3) -> None:
+    def __init__(self, config: DetectorConfig, minimum_peers: int = 1) -> None:
         self._config = config
         self._minimum_peers = minimum_peers
         self._last_seen: Dict[str, int] = {}
