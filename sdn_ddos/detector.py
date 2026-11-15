@@ -143,53 +143,36 @@ class DestinationPpsDetector:
 
 
 class DestinationConnectionDetector:
-    """Compara cada conexão com as taxas normais recentes das demais origens."""
+    """Detecta DoS comparando cada origem com as demais origens ativas do destino."""
 
     def __init__(self, config: DetectorConfig, minimum_peers: int = 3) -> None:
         self._config = config
         self._minimum_peers = minimum_peers
-        self._normal_pps: Dict[str, float] = {}
-        self._normal_bps: Dict[str, float] = {}
         self._last_seen: Dict[str, int] = {}
         self._streaks: Dict[Tuple[str, str], int] = defaultdict(int)
 
-    def evaluate(
-        self, rates: Dict[str, object], cycle: int
-    ) -> Dict[str, Dict[str, Detection]]:
-        """Avalia cada origem com referências anteriores, sem auto-inclusão."""
-        expired = [
-            src for src, seen in self._last_seen.items() if cycle - seen >= 2
-        ]
+    def evaluate(self, rates: Dict[str, object], cycle: int) -> Dict[str, Dict[str, Detection]]:
+        """Usa média e desvio atuais das outras origens, sem incluir a origem avaliada."""
+        expired = [src for src, seen in self._last_seen.items() if cycle - seen >= 2]
         for src in expired:
-            self._normal_pps.pop(src, None)
-            self._normal_bps.pop(src, None)
             self._last_seen.pop(src, None)
             self._streaks.pop((src, "PPS"), None)
             self._streaks.pop((src, "BYTES/S"), None)
 
-        # Congela as referências antes de avaliar qualquer origem do ciclo.
-        pps_reference = dict(self._normal_pps)
-        bps_reference = dict(self._normal_bps)
         results: Dict[str, Dict[str, Detection]] = {}
-        updates_pps: Dict[str, float] = {}
-        updates_bps: Dict[str, float] = {}
-
         for src, rate in rates.items():
             results[src] = {}
-            metrics = (
-                ("PPS", float(rate.pps), pps_reference, updates_pps,
-                 self._config.minimum_pps),
-                ("BYTES/S", float(rate.bps), bps_reference, updates_bps, 0.0),
-            )
-            for metric, value, reference, updates, floor in metrics:
-                peers = [v for peer, v in reference.items() if peer != src]
+            for metric, value, floor in (
+                ("PPS", float(rate.pps), self._config.minimum_pps),
+                ("BYTES/S", float(rate.bps), 0.0),
+            ):
+                peers = [
+                    float(other.pps if metric == "PPS" else other.bps)
+                    for other_src, other in rates.items() if other_src != src
+                ]
                 if len(peers) < self._minimum_peers:
-                    results[src][metric] = Detection(
-                        DetectionStatus.BASELINE, value, len(peers)
-                    )
-                    if value > 0:
-                        updates[src] = value
                     self._streaks[(src, metric)] = 0
+                    results[src][metric] = Detection(DetectionStatus.BASELINE, value, len(peers))
                     continue
 
                 mean = statistics.fmean(peers)
@@ -207,8 +190,7 @@ class DestinationConnectionDetector:
                     results[src][metric] = Detection(
                         DetectionStatus.ANOMALY, value, len(peers),
                         mean=mean, std=std, limit=limit,
-                        consecutive_anomalies=streak,
-                        should_block=should_block,
+                        consecutive_anomalies=streak, should_block=should_block,
                     )
                 else:
                     self._streaks[key] = 0
@@ -216,18 +198,9 @@ class DestinationConnectionDetector:
                         DetectionStatus.NORMAL, value, len(peers),
                         mean=mean, std=std, limit=limit,
                     )
-                    if value > 0:
-                        updates[src] = value
-
-        # Atualiza depois de avaliar todas as origens. Anomalias não entram.
-        self._normal_pps.update(updates_pps)
-        self._normal_bps.update(updates_bps)
-        for src in rates:
             self._last_seen[src] = cycle
         return results
 
     def reset(self) -> None:
-        self._normal_pps.clear()
-        self._normal_bps.clear()
         self._last_seen.clear()
         self._streaks.clear()
