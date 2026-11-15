@@ -1,6 +1,6 @@
 # SDN DDoS Controller
 
-Controlador SDN desenvolvido em Python utilizando **OS-Ken**, **Mininet** e **Open vSwitch**, com monitoramento de tráfego, detecção estatística de PPS agregado por destino, análise de entropia das origens e bloqueio temporário dos emissores candidatos.
+Controlador SDN desenvolvido em Python utilizando **OS-Ken**, **Mininet** e **Open vSwitch**, com monitoramento de tráfego, detecção estatística por conexão e por destino usando PPS e bytes/s, análise complementar de entropia e bloqueio temporário das origens identificadas.
 
 ## 1. Instalar dependências
 
@@ -234,4 +234,4 @@ Os parâmetros são lidos de variáveis de ambiente com prefixo `SDN_DDOS_`. Os 
 | `SDN_DDOS_BLOCK_TIME` | `30` | Duração do bloqueio em segundos |
 | `SDN_DDOS_LOG_LEVEL` | `INFO` | Nível de log |
 
-Os testes devem ser realizados somente no ambiente controlado do Mininet. Para executar os testes unitários, instale `pytest` no ambiente virtual (`pip install pytest`) e execute `pytest -q tests/test_entropy.py`. Os testes adicionados cobrem o cálculo de entropia, normalização, baseline e exclusão de amostras anômalas.
+Os testes devem ser realizados somente no ambiente controlado do Mininet. Para executar os testes unitários, instale `pytest` no ambiente virtual (`pip install pytest`) e execute `pytest -q tests`. Os testes cobrem as baselines agregadas e por conexão, detecção de anomalias individuais e coordenadas, entropia e exclusão de amostras anômalas.
