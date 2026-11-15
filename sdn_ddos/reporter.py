@@ -63,8 +63,9 @@ class ConsoleReporter:
     ) -> None:
         """Registra as taxas individuais; a decisão principal de PPS é por destino."""
         def status(detection: Detection) -> str:
+            # O progresso da baseline é exibido uma única vez na linha do destino.
             if detection.status is DetectionStatus.BASELINE:
-                return "BASELINE %s/%s" % (detection.baseline_size, 5)
+                return "coleta inicial"
             if detection.status is DetectionStatus.ANOMALY:
                 return "ANOMALIA %s/%s" % (detection.consecutive_anomalies, required)
             return "NORMAL"
@@ -92,6 +93,18 @@ class ConsoleReporter:
             status(bps_detection), rate.delta_packets, ping_info,
         )
 
+    def destination_baseline(
+        self, dst: str, sample: int, total: int,
+        total_pps: float, total_bps: float, entropy_bits: float,
+    ) -> None:
+        """Mostra o progresso único da baseline conjunta do destino."""
+        self._queue(
+            logging.INFO,
+            "[BASELINE] Destino: %-15s | Amostra %s/%s | "
+            "PPS: %.2f | bytes/s: %.2f | H: %.3f bits",
+            dst, sample, total, total_pps, total_bps, entropy_bits,
+        )
+
     def destination_result(
         self,
         dst: str,
@@ -103,7 +116,7 @@ class ConsoleReporter:
     ) -> None:
         """Exibe PPS, bytes/s e entropia juntos em uma linha por destino."""
         if detection.status is DetectionStatus.BASELINE:
-            pps_detail = "baseline %s/%s" % (detection.baseline_size, 5)
+            pps_detail = "coleta inicial"
         else:
             mean = "N/A" if detection.mean is None else "%.2f" % detection.mean
             std = "N/A" if detection.std is None else "%.2f" % detection.std
