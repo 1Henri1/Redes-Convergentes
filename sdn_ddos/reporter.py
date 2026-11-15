@@ -226,8 +226,7 @@ class ConsoleReporter:
 
     def destination_without_attribution(self, dst: str) -> None:
         self._queue(logging.WARNING, 
-            "[MITIGAÇÃO] Destino %s excedeu o limite, mas nenhuma origem nova "
-            "foi identificada; nenhum IP foi bloqueado.",
+            "[MITIGAÇÃO] Destino %s excedeu o limite, mas nenhuma origem pôde ser atribuída; nenhum IP foi bloqueado.",
             dst,
         )
 
