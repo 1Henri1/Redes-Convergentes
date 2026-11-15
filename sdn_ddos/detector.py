@@ -165,59 +165,87 @@ class DestinationConnectionDetector:
         )
 
         # PPS usa média + 1 desvio; bytes/s mantém o fator configurado.
-        # Primeiro identificamos outliers por sigma-clipping. Eles são removidos
-        # do conjunto de referência e os limites são recalculados, evitando que
-        # os próprios atacantes elevem a média e escondam uns aos outros.
+        # A exclusão é conjunta: se uma origem for anômala em qualquer métrica,
+        # ela deixa de compor a referência das duas métricas.
+        values_by_metric = {
+            metric: {src: getter(rate) for src, rate in rates.items()}
+            for metric, getter, _floor in metrics
+        }
+        factors = {
+            "PPS": 1.0,
+            "BYTES/S": self._config.threshold_factor,
+        }
+        anomalous_sources = set()
         limits = {}
-        anomalous_sources = {}
-        for metric, getter, floor in metrics:
-            values = {src: getter(rate) for src, rate in rates.items()}
-            if not values:
-                continue
 
-            factor = 1.0 if metric == "PPS" else self._config.threshold_factor
-            reference_sources = set(values)
-            while reference_sources:
-                reference_values = [values[src] for src in reference_sources]
-                mean = statistics.fmean(reference_values)
-                std = (
-                    statistics.stdev(reference_values)
-                    if len(reference_values) > 1 else 0.0
-                )
-                limit = max(
-                    mean + factor * std,
-                    mean * self._config.min_rate_factor,
-                    floor,
-                )
-                outliers = {
-                    src for src in reference_sources if values[src] > limit
+        # Itera até estabilizar: remove outliers, recalcula média/desvio e
+        # verifica novamente. Assim, vários atacantes não elevam juntos a média.
+        while True:
+            limits = {}
+            newly_anomalous = set()
+            for metric, _getter, floor in metrics:
+                values = values_by_metric[metric]
+                reference = {
+                    src: value for src, value in values.items()
+                    if src not in anomalous_sources
                 }
-                if not outliers:
-                    break
-                reference_sources.difference_update(outliers)
+                if not reference:
+                    reference = values
 
-            # Recalcula a referência final somente com origens não anômalas.
-            reference_values = [values[src] for src in reference_sources]
-            if reference_values:
+                reference_values = list(reference.values())
                 mean = statistics.fmean(reference_values)
                 std = (
                     statistics.stdev(reference_values)
                     if len(reference_values) > 1 else 0.0
                 )
                 limit = max(
-                    mean + factor * std,
+                    mean + factors[metric] * std,
                     mean * self._config.min_rate_factor,
                     floor,
                 )
-            else:
-                mean = statistics.fmean(values.values())
-                std = statistics.stdev(values.values()) if len(values) > 1 else 0.0
-                limit = max(mean + factor * std, mean * self._config.min_rate_factor, floor)
+                limits[metric] = (mean, std, limit, dict(
+                    (src, value) for src, value in values.items()
+                ))
+                newly_anomalous.update(
+                    src for src, value in values.items()
+                    if value > limit and src not in anomalous_sources
+                )
 
-            anomalous_sources[metric] = {
-                src for src, value in values.items() if value > limit
+            if not newly_anomalous:
+                break
+            anomalous_sources.update(newly_anomalous)
+
+        # Limites finais calculados sem nenhuma origem já classificada
+        # como anômala. Se todas forem anômalas, mantém a referência anterior.
+        for metric, _getter, floor in metrics:
+            values = values_by_metric[metric]
+            reference = {
+                src: value for src, value in values.items()
+                if src not in anomalous_sources
             }
-            limits[metric] = (mean, std, limit, getter)
+            if reference:
+                reference_values = list(reference.values())
+                mean = statistics.fmean(reference_values)
+                std = (
+                    statistics.stdev(reference_values)
+                    if len(reference_values) > 1 else 0.0
+                )
+                limit = max(
+                    mean + factors[metric] * std,
+                    mean * self._config.min_rate_factor,
+                    floor,
+                )
+                limits[metric] = (mean, std, limit, _getter)
+            else:
+                reference_values = list(values.values())
+                mean = statistics.fmean(reference_values)
+                std = statistics.stdev(reference_values) if len(reference_values) > 1 else 0.0
+                limit = max(
+                    mean + factors[metric] * std,
+                    mean * self._config.min_rate_factor,
+                    floor,
+                )
+                limits[metric] = (mean, std, limit, _getter)
 
         for src, rate in rates.items():
             results[src] = {}
