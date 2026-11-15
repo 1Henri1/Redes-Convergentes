@@ -114,7 +114,13 @@ class DestinationEntropyDetector:
 
         # Não aprende a partir de distribuições atípicas nem durante uma
         # janela em que o PPS agregado já foi considerado anômalo.
-        if update_baseline and not collecting_baseline and not anomalous:
+        if (
+            update_baseline
+            and not collecting_baseline
+            and source_count >= 2
+            and total_packets > 0
+            and not anomalous
+        ):
             self._history.append(entropy)
 
         return EntropyResult(
