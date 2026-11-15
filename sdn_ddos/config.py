@@ -26,7 +26,7 @@ class DetectorConfig:
     min_rate_factor: float = 1.5
     minimum_pps: float = 10.0
     entropy_threshold_factor: float = 3.0
-    minimum_entropy_delta: float = 0.25
+    minimum_entropy_factor: float = 1.5
     minimum_distributed_sources: int = 2
     required_anomalies: int = 2
     block_time: int = 30
@@ -49,8 +49,8 @@ class DetectorConfig:
                 "entropy_threshold_factor deve ser >= 0",
             ),
             (
-                self.minimum_entropy_delta >= 0,
-                "minimum_entropy_delta deve ser >= 0",
+                self.minimum_entropy_factor >= 1,
+                "minimum_entropy_factor deve ser >= 1",
             ),
             (
                 self.minimum_distributed_sources >= 2,
