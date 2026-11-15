@@ -34,18 +34,19 @@ class AnomalyDetector:
 
     def evaluate(
         self, pair_id: str, rate: float, minimum_rate: Optional[float] = None,
-        include_zero_rates: bool = False,
+        include_zero_rates: bool = False, update_baseline: bool = True,
     ) -> Detection:
         """Avalia uma métrica; somente o primeiro par forma a baseline inicial global."""
         # Não fixe a baseline em um par cuja primeira taxa seja zero:
         # isso pode impedir que a métrica forme sua baseline (especialmente bytes/s).
-        if self._baseline_pair is None and (rate > 0 or include_zero_rates):
+        if update_baseline and self._baseline_pair is None and (rate > 0 or include_zero_rates):
             self._baseline_pair = pair_id
         if not self.baseline_ready:
             if (
                 self._baseline_pair is not None
                 and pair_id == self._baseline_pair
                 and (rate > 0 or include_zero_rates)
+                and update_baseline
             ):
                 self._history.append(rate)
             return Detection(DetectionStatus.BASELINE, rate, baseline_size=len(self._history))
@@ -53,7 +54,7 @@ class AnomalyDetector:
         mean, std, limit = self.global_limits(minimum_rate)
         if rate <= 0:
             self._streaks[pair_id] = 0
-            if include_zero_rates:
+            if include_zero_rates and update_baseline:
                 self._history.append(0.0)
             return Detection(DetectionStatus.NORMAL, rate, len(self._history),
                              mean=mean, std=std, limit=limit)
@@ -64,7 +65,8 @@ class AnomalyDetector:
             return Detection(DetectionStatus.ANOMALY, rate, len(self._history), mean=mean, std=std,
                              limit=limit, consecutive_anomalies=streak, should_block=should_block)
         self._streaks[pair_id] = 0
-        self._history.append(rate)
+        if update_baseline:
+            self._history.append(rate)
         return Detection(DetectionStatus.NORMAL, rate, len(self._history), mean=mean, std=std, limit=limit)
 
 class DestinationPpsDetector:
