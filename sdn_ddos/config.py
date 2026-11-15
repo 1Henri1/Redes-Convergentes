@@ -18,7 +18,8 @@ _MAX_OPENFLOW_TIMEOUT = 65535
 class DetectorConfig:
     """Parâmetros de monitoramento, detecção e mitigação."""
 
-    monitor_interval: float = 5.0
+    monitor_interval: float = 2.0
+    report_interval: float = 10.0
     baseline_samples: int = 5
     history_size: int = 20
     threshold_factor: float = 3.0
@@ -29,12 +30,12 @@ class DetectorConfig:
     minimum_distributed_sources: int = 2
     required_anomalies: int = 2
     block_time: int = 30
-    summary_every_cycles: int = 6
 
     def __post_init__(self) -> None:
         """Valida os parâmetros logo na criação (fail-fast)."""
         rules = (
             (self.monitor_interval > 0, "monitor_interval deve ser > 0"),
+            (self.report_interval > 0, "report_interval deve ser > 0"),
             (self.baseline_samples >= 2, "baseline_samples deve ser >= 2"),
             (
                 self.history_size >= self.baseline_samples,
@@ -60,7 +61,6 @@ class DetectorConfig:
                 1 <= self.block_time <= _MAX_OPENFLOW_TIMEOUT,
                 f"block_time deve estar entre 1 e {_MAX_OPENFLOW_TIMEOUT}",
             ),
-            (self.summary_every_cycles >= 0, "summary_every_cycles deve ser >= 0"),
         )
         for is_valid, message in rules:
             if not is_valid:
