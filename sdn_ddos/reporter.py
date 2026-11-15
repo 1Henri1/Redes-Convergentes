@@ -217,6 +217,14 @@ class ConsoleReporter:
         values = ", ".join(ips) if ips else "nenhum"
         self._queue(logging.INFO, "[IPS BLOQUEADOS] %s", values)
 
+    def destination_expired(self, dst: str) -> None:
+        self._queue(
+            logging.INFO,
+            "[DESTINO REMOVIDO] %s ficou 2 ciclos consecutivos com 0 PPS; "
+            "baseline PPS, entropia e histórico foram descartados.",
+            dst,
+        )
+
     def baseline_started(self, dst: str, samples: int) -> None:
         self._queue(
             logging.INFO,
