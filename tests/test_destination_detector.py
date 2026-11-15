@@ -147,7 +147,7 @@ def connection(pps, bps):
     return SimpleNamespace(pps=pps, bps=bps)
 
 
-def test_connection_detector_flags_one_outlier_without_self_contamination():
+def test_connection_detector_flags_one_outlier_against_current_peer_mean_std():
     detector = DestinationConnectionDetector(make_config())
     normal = {f"10.0.0.{i}": connection(10, 100) for i in range(1, 11)}
     detector.evaluate(normal, 1)
@@ -157,6 +157,8 @@ def test_connection_detector_flags_one_outlier_without_self_contamination():
     first = detector.evaluate(rates, 2)
 
     assert first["10.0.0.10"]["PPS"].status is DetectionStatus.ANOMALY
+    assert first["10.0.0.10"]["PPS"].mean == pytest.approx(10)
+    assert first["10.0.0.10"]["PPS"].std == pytest.approx(0)
     assert first["10.0.0.10"]["PPS"].limit == pytest.approx(15)
     assert first["10.0.0.10"]["BYTES/S"].status is DetectionStatus.ANOMALY
     assert not first["10.0.0.10"]["PPS"].should_block
@@ -166,25 +168,19 @@ def test_connection_detector_flags_one_outlier_without_self_contamination():
     assert second["10.0.0.10"]["BYTES/S"].should_block
 
 
-def test_connection_detector_detects_coordinated_increase():
+def test_uniform_increase_is_not_individual_dos():
     detector = DestinationConnectionDetector(make_config())
     normal = {f"10.0.0.{i}": connection(10, 100) for i in range(1, 11)}
     detector.evaluate(normal, 1)
 
     increased = {src: connection(20, 200) for src in normal}
-    first = detector.evaluate(increased, 2)
+    result = detector.evaluate(increased, 2)
 
-    assert all(
-        result["PPS"].status is DetectionStatus.ANOMALY
-        for result in first.values()
-    )
-    assert all(
-        result["BYTES/S"].status is DetectionStatus.ANOMALY
-        for result in first.values()
-    )
+    assert all(item["PPS"].status is DetectionStatus.NORMAL for item in result.values())
+    assert all(item["BYTES/S"].status is DetectionStatus.NORMAL for item in result.values())
 
 
-def test_connection_anomalies_do_not_update_normal_reference():
+def test_outlier_streak_resets_when_origin_returns_to_normal():
     detector = DestinationConnectionDetector(make_config())
     normal = {f"10.0.0.{i}": connection(10, 100) for i in range(1, 5)}
     detector.evaluate(normal, 1)
