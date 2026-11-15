@@ -207,6 +207,12 @@ E limpe os recursos:
 sudo mn -c
 ```
 
+### Expiração de destinos inativos
+
+Um destino é removido do monitoramento quando apresenta **0 PPS em dois ciclos consecutivos de avaliação**. Nessa remoção, o controlador descarta as baselines de PPS e entropia, o histórico de anomalias e os candidatos associados. Um único ciclo com 0 PPS não remove o destino: se houver tráfego no ciclo seguinte, o contador de inatividade volta a zero.
+
+Quando uma nova solicitação de comunicação for observada para esse destino (TCP SYN inicial, UDP ou ICMP Echo Request), o controlador cria uma nova baseline. As cinco amostras são coletadas novamente, uma por ciclo de avaliação, antes de iniciar a detecção.
+
 ## 6. Configuração
 
 Os parâmetros são lidos de variáveis de ambiente com prefixo `SDN_DDOS_`. Os que não forem definidos usam o padrão. `SDN_DDOS_MONITOR_INTERVAL` controla a frequência de avaliação; `SDN_DDOS_REPORT_INTERVAL` controla a frequência de impressão.
