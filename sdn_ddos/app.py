@@ -266,7 +266,7 @@ class SdnDdosController(app_manager.OSKenApp):
             hub.sleep(sleep_for)
 
     def _run_monitor_cycle(self, cycle: int) -> None:
-        """Coleta taxas, avalia PPS agregado por destino e expira bloqueios."""
+        """Coleta taxas, avalia conexões e destinos e expira bloqueios."""
         self._expire_icmp_requests()
         icmp_interval = self._report_icmp_interval()
         for ip in self._blocklist.pop_expired():
