@@ -361,10 +361,18 @@ class SdnDdosController(app_manager.OSKenApp):
                 else:
                     self._stats.concentrated_events += 1
 
-            self._reporter.destination_result(
-                dst, total_pps, total_bps, detection, entropy_result,
-                self._config.required_anomalies,
-            )
+            if detection.status is DetectionStatus.BASELINE:
+                # Um único progresso representa a coleta sincronizada das
+                # métricas do destino (PPS, bytes/s e entropia).
+                self._reporter.destination_baseline(
+                    dst, detection.baseline_size, self._config.baseline_samples,
+                    total_pps, total_bps, entropy_result.entropy_bits,
+                )
+            else:
+                self._reporter.destination_result(
+                    dst, total_pps, total_bps, detection, entropy_result,
+                    self._config.required_anomalies,
+                )
 
             if detection.status is DetectionStatus.ANOMALY:
                 self._reporter.destination_classification(
