@@ -83,7 +83,10 @@ class DestinationPpsDetector:
     def baseline_ready(self) -> bool:
         return len(self._history) >= self._config.baseline_samples
 
-    def evaluate(self, rate: float, minimum_rate: Optional[float] = None) -> Detection:
+    def evaluate(
+        self, rate: float, minimum_rate: Optional[float] = None,
+        update_baseline: bool = True,
+    ) -> Detection:
         """Avalia uma taxa agregada recebida por um destino em uma janela.
 
         minimum_rate permite usar o mesmo cálculo para bytes/s sem aplicar
@@ -93,7 +96,8 @@ class DestinationPpsDetector:
         floor = self._config.minimum_pps if minimum_rate is None else minimum_rate
 
         if not self.baseline_ready:
-            self._history.append(rate)
+            if update_baseline:
+                self._history.append(rate)
             return Detection(
                 DetectionStatus.BASELINE, rate, len(self._history)
             )
@@ -126,7 +130,8 @@ class DestinationPpsDetector:
             )
 
         self._streak = 0
-        self._history.append(rate)
+        if update_baseline:
+            self._history.append(rate)
         return Detection(
             DetectionStatus.NORMAL,
             rate,
