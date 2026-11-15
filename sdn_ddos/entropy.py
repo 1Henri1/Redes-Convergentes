@@ -76,7 +76,11 @@ class DestinationEntropyDetector:
     ) -> EntropyResult:
         entropy, normalized, source_count, total_packets = shannon_entropy(packet_counts)
 
-        if not self.baseline_ready and update_baseline:
+        # A baseline só aceita janelas válidas: pelo menos duas origens
+        # contribuíram com pacotes. Janelas vazias ou de origem única não
+        # representam a distribuição do tráfego e não devem contaminá-la.
+        collecting_baseline = not self.baseline_ready
+        if collecting_baseline and update_baseline and source_count >= 2 and total_packets > 0:
             self._history.append(entropy)
 
         if not self.baseline_ready:
@@ -110,7 +114,7 @@ class DestinationEntropyDetector:
 
         # Não aprende a partir de distribuições atípicas nem durante uma
         # janela em que o PPS agregado já foi considerado anômalo.
-        if update_baseline and not anomalous:
+        if update_baseline and not collecting_baseline and not anomalous:
             self._history.append(entropy)
 
         return EntropyResult(
