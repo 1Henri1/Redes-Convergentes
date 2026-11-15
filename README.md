@@ -1,6 +1,6 @@
 # SDN DDoS Controller
 
-Controlador SDN desenvolvido em Python utilizando **OS-Ken**, **Mininet** e **Open vSwitch**, com monitoramento de tráfego, detecção estatística por conexão e por destino usando PPS e bytes/s, análise complementar de entropia e bloqueio temporário das origens identificadas.
+Controlador SDN desenvolvido em Python utilizando **OS-Ken**, **Mininet** e **Open vSwitch**, com monitoramento de tráfego, detecção individual de DoS por PPS/bytes/s e detecção de DDoS por entropia e bloqueio temporário das origens identificadas.
 
 ## 1. Instalar dependências
 
@@ -72,26 +72,9 @@ O controlador separa a frequência de avaliação da frequência de impressão n
 - **PPS:** pacotes por segundo.
 - **bytes/s:** volume de dados transmitidos por segundo, calculado a partir dos bytes observados.
 
-A detecção opera em dois níveis complementares. **Por conexão**, cada origem é comparada com as demais origens do mesmo destino, separadamente para PPS e bytes/s. A média e o desvio padrão usam as referências normais das outras conexões, excluindo a origem avaliada. São necessárias pelo menos três conexões de referência; antes disso, as taxas contribuem para formar a referência. Conexões ausentes por dois ciclos são removidas da população de referência. Amostras anômalas não atualizam essa referência. **Por destino**, PPS agregado e bytes/s agregado mantêm baselines temporais independentes para detectar elevações coordenadas. O limite de PPS considera média + 3 × desvio padrão, média × fator mínimo e o piso absoluto configurável. Para bytes/s, o limite é `max(média + 3 × desvio padrão, média × 1,5)`, sem piso absoluto. Assim, uma rede habituada a 10.000 bytes/s pode sinalizar uma elevação persistente para 20.000 bytes/s mesmo que o PPS não aumente. A anomalia precisa persistir pelo número configurado de janelas consecutivas. Cada destino possui uma baseline conjunta e independente, com uma amostra por janela. Quando uma solicitação de comunicação chega para um destino ainda sem detector e cuja média de recebimento é, portanto, zero, o controlador cria uma baseline individual para ele. A baseline é preenchida de forma conjunta ao longo de `baseline_samples` ciclos reais de monitoramento. Em cada ciclo, PPS agregado, bytes/s agregado e entropia são coletados para o mesmo destino; o progresso aparece em uma única mensagem `[BASELINE] Destino ... Amostra k/n`. A análise agregada do destino só passa à detecção após completar esses ciclos; a análise por conexão começa assim que há três referências normais disponíveis. As métricas não exibem contadores de baseline separados. São consideradas solicitações TCP SYN, datagramas UDP e ICMP Echo Request. O limite é o maior entre média + 3 × desvio padrão, média × fator mínimo e o piso absoluto configurável. Amostras acima do limite não entram no histórico; amostras normais atualizam a janela. A anomalia precisa persistir pelo número configurado de janelas consecutivas.
+A detecção separa **DoS** e **DDoS**. Para **DoS**, cada origem é comparada às demais origens ativas do mesmo destino, separadamente para PPS e bytes/s. A origem avaliada é excluída do cálculo. Em cada ciclo, a média é a soma das taxas das outras origens dividida pela quantidade delas, e o desvio padrão é calculado sobre esses mesmos valores. O limite é o maior entre média + 3 × desvio padrão, média × fator mínimo e o piso configurado (somente PPS usa o piso absoluto). A anomalia precisa persistir pelo número configurado de ciclos para bloquear apenas a origem responsável. Se todas as origens aumentarem de forma semelhante, isso não gera vários bloqueios individuais.
 
-A implementação também calcula a **entropia de Shannon das origens** em cada destino. Para cada janela, a proporção de pacotes da origem i é `p_i = P_i / Σ_j P_j`, e a entropia é `H = -Σ_i p_i log₂(p_i)`. A saída mostra a entropia normalizada entre 0 e 1, o número de origens e o limite estatístico de H. A baseline é específica de cada destino e não é atualizada quando há anomalia agregada ou individual de PPS/bytes/s, nem quando a própria entropia está elevada. A entropia é um indicador complementar de distribuição, mas não bloqueia origens sozinha, pois não identifica qual emissor é responsável.
-
-A mitigação bloqueia somente origens cuja própria conexão apresente anomalia persistente de PPS ou bytes/s em relação às demais conexões do destino. Assim, origens já ativas também podem ser identificadas, e uma conexão nova não contamina a referência antes de ser avaliada. As elevações agregadas e a entropia continuam sinalizando eventos, mas **não provocam o bloqueio indiscriminado de todas as origens**: sem uma origem individualmente identificada, o controlador registra que não houve atribuição. As origens confirmadas são bloqueadas temporariamente em envio e recebimento.
-
-Exemplo ilustrativo das mensagens durante uma anomalia. PPS, bytes/s e entropia são apresentados juntos na linha do destino; a lista de IPs bloqueados é exibida em todos os ciclos, mesmo vazia:
-
-```text
-[CONEXÃO] 10.0.0.3 -> 10.0.0.10 | PPS 30.00 (média 10.00 | desvio 0.00 | limite 15.00 | ANOMALIA 1/2) | bytes/s 300.00 (média 100.00 | desvio 0.00 | limite 150.00 | ANOMALIA 1/2)
-[DESTINO] 10.0.0.10 | PPS: 145.00 (média 30.00 | desvio 5.00 | limite 45.00 | ANOMALIA 1/2) | bytes/s: 8120.00 | origens: 6 | H: 2.400 bits (norm. 0.930) | H média 0.500 | H desvio 0.250 | H limite 1.250 | ENTROPIA ELEVADA
-[IPS BLOQUEADOS] Origens (envio): 10.0.0.3 | Destinos (recebimento): 10.0.0.3
-[CLASSIFICAÇÃO] Destino: 10.0.0.10 | PADRÃO DISTRIBUÍDO (possível DDoS) | origens: 6 | entropia: 2.400 bits | normalizada: 0.930
-[ATRIBUIÇÃO] Destino: 10.0.0.10 | gatilho: PPS E/OU BYTES/S POR CONEXÃO | origens identificadas: 10.0.0.3
-[BLOQUEIO ATIVADO] IP 10.0.0.3 bloqueado para ENVIAR e RECEBER por 30s (prioridade OpenFlow 100).
-```
-
-Os números acima são apenas um exemplo de formatação, não resultados medidos.
-
-PPS e bytes/s são avaliados individualmente por conexão e também de forma agregada por destino. A análise por conexão identifica emissores que destoam dos demais; a análise agregada identifica aumentos simultâneos de várias origens. A entropia caracteriza mudanças na distribuição das origens, como indicador complementar. A entropia elevada, desde que envolva o número mínimo de origens e supere o limite estatístico, classifica o padrão como possível DDoS e pode iniciar o bloqueio sem anomalia de PPS.
+Para **DDoS**, a entropia de Shannon das origens é o único critério de classificação e confirmação. Para cada janela, a proporção de pacotes da origem i é `p_i = P_i / Σ_j P_j`, e a entropia é `H = -Σ_i p_i log₂(p_i)`. A saída mostra H, H normalizada, número de origens e limite estatístico. Uma entropia acima do limite, com o número mínimo de origens e persistente pelo número configurado de ciclos, caracteriza possível DDoS. Nesse caso, o controlador bloqueia somente as origens que começaram a transmitir recentemente para aquele destino, evitando bloquear emissores antigos sem relação com o evento. PPS e bytes/s agregados não classificam nem confirmam DDoS e não acionam bloqueio por destino.
 
 **Gerador de tráfego:** `tools/generate_traffic.py` gera tráfego TCP ou UDP para testar o monitoramento de PPS e bytes/s. Embora possa abrir várias conexões ou sockets, o controlador não usa a quantidade de fluxos como métrica de detecção. O tamanho e o intervalo dos envios influenciam o volume observado; os resultados reais dependem do comportamento do sistema e devem ser conferidos nos logs do controlador.
 
@@ -234,4 +217,4 @@ Os parâmetros são lidos de variáveis de ambiente com prefixo `SDN_DDOS_`. Os 
 | `SDN_DDOS_BLOCK_TIME` | `30` | Duração do bloqueio em segundos |
 | `SDN_DDOS_LOG_LEVEL` | `INFO` | Nível de log |
 
-Os testes devem ser realizados somente no ambiente controlado do Mininet. Para executar os testes unitários, instale `pytest` no ambiente virtual (`pip install pytest`) e execute `pytest -q tests`. Os testes cobrem as baselines agregadas e por conexão, detecção de anomalias individuais e coordenadas, entropia e exclusão de amostras anômalas.
+Os testes devem ser realizados somente no ambiente controlado do Mininet. Para executar os testes unitários, instale `pytest` no ambiente virtual (`pip install pytest`) e execute `pytest -q tests`. Os testes cobrem a detecção individual por PPS/bytes/s, aumentos uniformes entre origens e detecção de entropia.
