@@ -41,7 +41,7 @@ def test_distributed_entropy_is_detected_without_polluting_baseline():
         DetectorConfig(baseline_samples=3, history_size=10)
     )
     for _ in range(3):
-        result = detector.evaluate({"10.0.0.1": 20})
+        result = detector.evaluate({"10.0.0.1": 20, "10.0.0.2": 20})
     assert result.baseline_ready
 
     result = detector.evaluate({
@@ -61,8 +61,8 @@ def test_entropy_alone_does_not_classify_one_source_as_distributed():
     detector = DestinationEntropyDetector(
         DetectorConfig(baseline_samples=2, history_size=10)
     )
-    detector.evaluate({"10.0.0.1": 10})
-    detector.evaluate({"10.0.0.1": 10})
+    detector.evaluate({"10.0.0.1": 10, "10.0.0.2": 10})
+    detector.evaluate({"10.0.0.1": 10, "10.0.0.2": 10})
 
     result = detector.evaluate({"10.0.0.1": 100}, update_baseline=False)
     assert not result.anomalous
@@ -73,10 +73,10 @@ def test_normal_entropy_updates_baseline():
     detector = DestinationEntropyDetector(
         DetectorConfig(baseline_samples=2, history_size=10)
     )
-    detector.evaluate({"10.0.0.1": 10})
-    detector.evaluate({"10.0.0.1": 10})
+    detector.evaluate({"10.0.0.1": 10, "10.0.0.2": 10})
+    detector.evaluate({"10.0.0.1": 10, "10.0.0.2": 10})
 
-    result = detector.evaluate({"10.0.0.1": 12})
+    result = detector.evaluate({"10.0.0.1": 12, "10.0.0.2": 12})
     assert not result.anomalous
     assert result.baseline_size == 3
 
@@ -112,8 +112,8 @@ def test_normal_entropy_resets_anomaly_streak():
             minimum_entropy_factor=1.5,
         )
     )
-    detector.evaluate({"10.0.0.1": 10})
-    detector.evaluate({"10.0.0.1": 10})
+    detector.evaluate({"10.0.0.1": 10, "10.0.0.2": 10})
+    detector.evaluate({"10.0.0.1": 10, "10.0.0.2": 10})
     spike = {"10.0.0.1": 10, "10.0.0.2": 10, "10.0.0.3": 10}
 
     first = detector.evaluate(spike, update_baseline=False)
