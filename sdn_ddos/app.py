@@ -185,10 +185,7 @@ class SdnDdosController(app_manager.OSKenApp):
         # as cinco amostras configuradas.
         self._destination_detectors[dst] = DestinationPpsDetector(self._config)
         self._known_destinations.add(dst)
-        _logger.info(
-            "[BASELINE] Iniciada para o novo destino %s: coleta de %s ciclos",
-            dst, self._config.baseline_samples,
-        )
+        self._reporter.baseline_started(dst, self._config.baseline_samples)
 
     def _learn_ip(self, dpid: int, pkt: packet.Packet, in_port: int) -> None:
         """Aprende o IP do remetente a partir de IPv4 ou ARP.
@@ -210,19 +207,53 @@ class SdnDdosController(app_manager.OSKenApp):
     # ==================================================================
 
     def _monitor_loop(self) -> None:
-        """Pede estatísticas periodicamente, para sempre.
-
-        Cada ciclo tem seu próprio try/except: uma exceção não tratada
-        mataria esta green thread e o monitoramento pararia em silêncio.
-        """
+        """Avalia na frequência configurada e publica relatórios em lote."""
         cycle = 0
+        last_report = time.monotonic()
+        next_report = last_report + self._config.report_interval
+        previous_stats = ControllerStats()
+
         while True:
             try:
                 self._run_monitor_cycle(cycle)
             except Exception:  # noqa: BLE001 - o laço deve sobreviver a qualquer erro
                 _logger.exception("Falha no ciclo de monitoramento %s", cycle)
+
             cycle += 1
-            hub.sleep(self._config.monitor_interval)
+            now = time.monotonic()
+            if now >= next_report:
+                current = self._stats
+                interval_stats = ControllerStats(
+                    detections=current.detections - previous_stats.detections,
+                    blocks=current.blocks - previous_stats.blocks,
+                    distributed_events=(
+                        current.distributed_events - previous_stats.distributed_events
+                    ),
+                    concentrated_events=(
+                        current.concentrated_events - previous_stats.concentrated_events
+                    ),
+                )
+                self._reporter.report(
+                    now - last_report,
+                    interval_stats,
+                    len(self._datapaths),
+                    self._blocklist.active_ips(),
+                )
+                previous_stats = ControllerStats(
+                    detections=current.detections,
+                    blocks=current.blocks,
+                    distributed_events=current.distributed_events,
+                    concentrated_events=current.concentrated_events,
+                )
+                last_report = now
+                next_report = now + self._config.report_interval
+
+            # Acorda no próximo instante de avaliação ou de relatório.
+            sleep_for = min(
+                self._config.monitor_interval,
+                max(0.01, next_report - time.monotonic()),
+            )
+            hub.sleep(sleep_for)
 
     def _run_monitor_cycle(self, cycle: int) -> None:
         """Coleta taxas, avalia PPS agregado por destino e expira bloqueios."""
@@ -230,9 +261,6 @@ class SdnDdosController(app_manager.OSKenApp):
         icmp_interval = self._report_icmp_interval()
         for ip in self._blocklist.pop_expired():
             self._reporter.block_expired(ip)
-        # A lista aparece em todos os ciclos, inclusive quando estiver vazia.
-        self._reporter.blocked_ips(self._blocklist.active_ips())
-
         rates = self._rates.collect_rates()
         active_rates: Dict[tuple[str, str], Any] = {}
 
@@ -341,9 +369,6 @@ class SdnDdosController(app_manager.OSKenApp):
                 self._destination_anomaly_start.pop(dst, None)
                 self._destination_candidates.pop(dst, None)
 
-        every = self._config.summary_every_cycles
-        if every and cycle > 0 and cycle % every == 0:
-            self._reporter.summary(self._stats, len(self._datapaths), len(self._blocklist))
 
     def _record_packet(self, pkt: packet.Packet) -> None:
         """Registra taxas e mede os pings manuais observados pelo switch."""
