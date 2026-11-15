@@ -333,11 +333,6 @@ class SdnDdosController(app_manager.OSKenApp):
             dos_sources = set()
             for src, metrics in connection_results.items():
                 pps_result, bytes_result = metrics["PPS"], metrics["BYTES/S"]
-                # Mostra os dois limites para todas as origens, inclusive as normais.
-                self._reporter.connection_result(
-                    src, dst, destination_rates[src], pps_result, bytes_result,
-                    self._config.required_anomalies,
-                )
                 if pps_result.should_block or bytes_result.should_block:
                     dos_sources.add(src)
 
@@ -398,9 +393,22 @@ class SdnDdosController(app_manager.OSKenApp):
                 bytes_mean = statistics.fmean(bytes_values) if bytes_values else 0.0
                 pps_std = statistics.stdev(pps_values) if len(pps_values) > 1 else 0.0
                 bytes_std = statistics.stdev(bytes_values) if len(bytes_values) > 1 else 0.0
+                pps_limit = next(
+                    (result.limit for result in (
+                        metrics["PPS"] for metrics in connection_results.values()
+                    ) if result.limit is not None),
+                    0.0,
+                )
+                bytes_limit = next(
+                    (result.limit for result in (
+                        metrics["BYTES/S"] for metrics in connection_results.values()
+                    ) if result.limit is not None),
+                    0.0,
+                )
                 self._reporter.destination_result(
                     dst, total_pps, total_bps, len(destination_rates),
                     pps_mean, pps_std, bytes_mean, bytes_std,
+                    pps_limit, bytes_limit,
                     entropy_result, self._config.required_anomalies,
                 )
 
