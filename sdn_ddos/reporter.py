@@ -103,7 +103,7 @@ class ConsoleReporter:
     ) -> None:
         """Exibe PPS, bytes/s e entropia juntos em uma linha por destino."""
         if detection.status is DetectionStatus.BASELINE:
-            pps_detail = "baseline %s/%s" % (detection.baseline_size, required)
+            pps_detail = "baseline %s/%s" % (detection.baseline_size, 5)
         else:
             mean = "N/A" if detection.mean is None else "%.2f" % detection.mean
             std = "N/A" if detection.std is None else "%.2f" % detection.std
