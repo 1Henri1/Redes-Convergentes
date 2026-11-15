@@ -368,12 +368,14 @@ class SdnDdosController(app_manager.OSKenApp):
                 if pair_result.status is DetectionStatus.ANOMALY:
                     suspicious_sources.add(src)
 
-            for src, metrics in connection_results.items():
-                pps_result, bytes_result = metrics["PPS"], metrics["BYTES/S"]
+            for src in destination_rates:
+                metrics = connection_results.get(src, {})
+                pps_result = metrics.get("PPS")
+                bytes_result = metrics.get("BYTES/S")
                 pair_bytes_result = pair_bps_results.get((src, dst))
                 if (
-                    pps_result.should_block
-                    or bytes_result.should_block
+                    (pps_result is not None and pps_result.should_block)
+                    or (bytes_result is not None and bytes_result.should_block)
                     or (pair_bytes_result is not None and pair_bytes_result.should_block)
                 ):
                     dos_sources.add(src)
