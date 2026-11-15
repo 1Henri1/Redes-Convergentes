@@ -151,12 +151,15 @@ class DestinationConnectionDetector:
         self._streaks: Dict[Tuple[str, str], int] = defaultdict(int)
 
     def evaluate(self, rates: Dict[str, object], cycle: int) -> Dict[str, Dict[str, Detection]]:
-        """Calcula média/desvio com TODAS as origens e compara cada uma aos mesmos limites."""
+        """Compara origens com limites do destino, removendo outliers das referências."""
         expired = [src for src, seen in self._last_seen.items() if cycle - seen >= 2]
         for src in expired:
             self._last_seen.pop(src, None)
             self._streaks.pop((src, "PPS"), None)
             self._streaks.pop((src, "BYTES/S"), None)
+
+        if not rates:
+            return {}
 
         results: Dict[str, Dict[str, Detection]] = {}
         metrics = (
@@ -203,9 +206,7 @@ class DestinationConnectionDetector:
                     mean * self._config.min_rate_factor,
                     floor,
                 )
-                limits[metric] = (mean, std, limit, dict(
-                    (src, value) for src, value in values.items()
-                ))
+                limits[metric] = (mean, std, limit, _getter)
                 newly_anomalous.update(
                     src for src, value in values.items()
                     if value > limit and src not in anomalous_sources
