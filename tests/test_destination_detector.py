@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import pytest
 
 from sdn_ddos.config import DetectorConfig
@@ -139,9 +141,6 @@ def test_bytes_detector_does_not_use_pps_absolute_floor():
 
     assert result.status is DetectionStatus.NORMAL
     assert result.limit == pytest.approx(3.0)
-
-
-from types import SimpleNamespace
 
 
 def connection(pps, bps):
