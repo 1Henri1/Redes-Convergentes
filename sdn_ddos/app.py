@@ -438,23 +438,63 @@ class SdnDdosController(app_manager.OSKenApp):
                     dst, entropy_result, entropy_anomalous
                 )
 
-            # Alertas agregados e entropia caracterizam o evento, mas só
-            # origens individualmente anômalas são elegíveis para bloqueio.
-            if connection_candidates:
-                self._reporter.destination_candidates(
-                    dst, sorted(connection_candidates), "PPS E/OU BYTES/S POR CONEXÃO"
+            # Guarda origens que começaram a transmitir recentemente. Isso
+            # permite atribuir ataques distribuídos formados por várias fontes
+            # novas, mesmo quando elas têm taxas semelhantes entre si e ainda
+            # não possuem referências individuais suficientes.
+            if pps_anomalous or bytes_anomalous or entropy_anomalous:
+                candidates = self._destination_candidates.setdefault(dst, set())
+                lookback = max(
+                    self._config.baseline_samples,
+                    self._config.required_anomalies + 1,
                 )
+                for src, rate in destination_rates.items():
+                    first_seen = self._pair_first_seen_cycle.get((src, dst), cycle)
+                    if (
+                        rate.pps > 0
+                        and cycle - first_seen <= lookback
+                    ):
+                        candidates.add(src)
+                candidates.update(connection_candidates)
+                self._destination_anomaly_start.setdefault(dst, cycle)
+            else:
+                # Uma anomalia que não persistiu não deve deixar candidatos
+                # antigos disponíveis para um evento futuro.
+                self._destination_candidates.pop(dst, None)
+                self._destination_anomaly_start.pop(dst, None)
+
+            confirmed = (
+                detection.should_block or bytes_detection.should_block
+                or entropy_result.should_block
+            )
+            if confirmed:
+                candidates = set(self._destination_candidates.get(dst, set()))
+                candidates.update(connection_candidates)
+                if candidates:
+                    self._reporter.destination_candidates(
+                        dst, sorted(candidates),
+                        "ANOMALIA AGREGADA/ENTROPIA E/OU CONEXÃO",
+                    )
+                    for src in sorted(candidates):
+                        if self._blocklist.is_blocked(src):
+                            continue
+                        datapath = self._datapath_for_ip(src)
+                        if datapath is not None:
+                            self._block(datapath, src)
+                else:
+                    self._reporter.destination_without_attribution(dst)
+                self._destination_candidates.pop(dst, None)
+                self._destination_anomaly_start.pop(dst, None)
+            elif connection_candidates:
+                # Uma conexão pode atingir seu próprio limite antes da
+                # confirmação agregada do destino.
                 for src in sorted(connection_candidates):
                     if self._blocklist.is_blocked(src):
                         continue
                     datapath = self._datapath_for_ip(src)
                     if datapath is not None:
                         self._block(datapath, src)
-            elif (
-                detection.should_block or bytes_detection.should_block
-                or entropy_result.should_block
-            ):
-                self._reporter.destination_without_attribution(dst)
+
 
 
     def _record_packet(self, pkt: packet.Packet) -> None:
