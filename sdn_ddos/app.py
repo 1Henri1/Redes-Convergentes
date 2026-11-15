@@ -10,6 +10,7 @@ informado a ``run_apps`` (``sdn_ddos.app``); por isso ela não é reexportada.
 """
 
 import logging
+import statistics
 import time
 from typing import Any, Dict
 
@@ -263,18 +264,15 @@ class SdnDdosController(app_manager.OSKenApp):
                 self._config.monitor_interval,
                 max(0.01, next_report - time.monotonic()),
             )
-            hub.sleep(sleep_for)
-
-    def _run_monitor_cycle(self, cycle: int) -> None:
-        """Coleta taxas, avalia conexões e destinos e expira bloqueios."""
+            hub.    def _run_monitor_cycle(self, cycle: int) -> None:
+        """Avalia DoS por origem e DDoS exclusivamente pela entropia."""
         self._expire_icmp_requests()
         icmp_interval = self._report_icmp_interval()
         for ip in self._blocklist.pop_expired():
             self._reporter.block_expired(ip)
+
         rates = self._rates.collect_rates()
         active_rates: Dict[tuple[str, str], Any] = {}
-
-        # Primeiro processa os pares e preserva a telemetria individual.
         for (src, dst), rate in rates.items():
             src_blocked = self._blocklist.is_blocked(src)
             dst_blocked = self._blocklist.is_blocked(dst)
@@ -284,66 +282,29 @@ class SdnDdosController(app_manager.OSKenApp):
                 self._reporter.blocked_destination_traffic(src, dst, rate)
             if src_blocked or dst_blocked:
                 continue
-
             active_rates[(src, dst)] = rate
             pair = (src, dst)
             last_seen = self._pair_last_seen_cycle.get(pair)
-            # Se o par ficou ausente por mais de duas janelas, considera-se
-            # uma nova aparição (o medidor remove pares após duas janelas zeradas).
             if last_seen is None or cycle - last_seen > 2:
                 self._pair_first_seen_cycle[pair] = cycle
             self._pair_last_seen_cycle[pair] = cycle
             datapath = self._datapath_for_ip(src)
             if datapath is not None:
-                self._process_pair_rate(
-                    datapath, src, dst, rate, icmp_interval.get((src, dst))
-                )
+                self._process_pair_rate(datapath, src, dst, rate, icmp_interval.get((src, dst)))
 
-        # Mantém apenas IPs que já foram observados como destino. Assim, uma
-        # origem que nunca recebeu tráfego não aparece indevidamente em [DESTINO].
         self._known_destinations.update(dst for (_src, dst) in active_rates)
-        # Os destinos já conhecidos continuam sendo avaliados com PPS = 0
-        # quando não recebem pacotes nesta janela.
         destinations = self._known_destinations | set(self._destination_detectors)
-
         for dst in sorted(destinations):
             if self._blocklist.is_blocked(dst):
                 continue
             destination_rates = {
-                src: rate for (src, target), rate in active_rates.items()
-                if target == dst
+                src: rate for (src, target), rate in active_rates.items() if target == dst
             }
             total_pps = sum(rate.pps for rate in destination_rates.values())
             total_bps = sum(rate.bps for rate in destination_rates.values())
 
-            # Avaliação transversal: cada origem é comparada às referências
-            # normais das demais conexões, sem participar da própria referência.
-            connection_detector = self._destination_connection_detectors.setdefault(
-                dst, DestinationConnectionDetector(self._config)
-            )
-            connection_results = connection_detector.evaluate(destination_rates, cycle)
-            connection_candidates = set()
-            for src, metric_results in connection_results.items():
-                pps_result = metric_results["PPS"]
-                bytes_result = metric_results["BYTES/S"]
-                if (
-                    pps_result.status is DetectionStatus.ANOMALY
-                    or bytes_result.status is DetectionStatus.ANOMALY
-                ):
-                    self._reporter.connection_result(
-                        src, dst, destination_rates[src], pps_result, bytes_result,
-                        self._config.required_anomalies,
-                    )
-                if pps_result.should_block or bytes_result.should_block:
-                    connection_candidates.add(src)
-
-
-            # Dois ciclos consecutivos sem tráfego encerram o ciclo de vida
-            # deste destino: sua baseline PPS/entropia e histórico são descartados.
             if total_pps <= 0:
-                self._destination_zero_cycles[dst] = (
-                    self._destination_zero_cycles.get(dst, 0) + 1
-                )
+                self._destination_zero_cycles[dst] = self._destination_zero_cycles.get(dst, 0) + 1
                 if self._destination_zero_cycles[dst] >= 2:
                     self._destination_detectors.pop(dst, None)
                     self._destination_bytes_detectors.pop(dst, None)
@@ -362,138 +323,92 @@ class SdnDdosController(app_manager.OSKenApp):
             else:
                 self._destination_zero_cycles[dst] = 0
 
+            # DoS: PPS e bytes/s são comparados transversalmente entre origens.
+            connection_detector = self._destination_connection_detectors.setdefault(
+                dst, DestinationConnectionDetector(self._config)
+            )
+            connection_results = connection_detector.evaluate(destination_rates, cycle)
+            dos_sources = set()
+            for src, metrics in connection_results.items():
+                pps_result, bytes_result = metrics["PPS"], metrics["BYTES/S"]
+                if pps_result.status is DetectionStatus.ANOMALY or bytes_result.status is DetectionStatus.ANOMALY:
+                    self._reporter.connection_result(
+                        src, dst, destination_rates[src], pps_result, bytes_result,
+                        self._config.required_anomalies,
+                    )
+                if pps_result.should_block or bytes_result.should_block:
+                    dos_sources.add(src)
+
+            # DDoS: somente a entropia classifica/confirma um ataque distribuído.
             source_packet_counts = {
-                src: rate.delta_packets
-                for src, rate in destination_rates.items()
+                src: rate.delta_packets for src, rate in destination_rates.items()
                 if rate.delta_packets > 0
             }
-
-            detector = self._destination_detectors.get(dst)
-            if detector is None:
-                detector = DestinationPpsDetector(self._config)
-                self._destination_detectors[dst] = detector
-                self._reporter.baseline_started(dst, self._config.baseline_samples)
-            connection_pps_anomalous = any(
-                result["PPS"].status is DetectionStatus.ANOMALY
-                for result in connection_results.values()
-            )
-            connection_bytes_anomalous = any(
-                result["BYTES/S"].status is DetectionStatus.ANOMALY
-                for result in connection_results.values()
-            )
-            detection = detector.evaluate(
-                total_pps, update_baseline=not connection_pps_anomalous
-            )
-
-            # O histórico agregado também ignora ciclos com anomalia individual.
-            bytes_detector = self._destination_bytes_detectors.get(dst)
-            if bytes_detector is None:
-                bytes_detector = DestinationPpsDetector(self._config)
-                self._destination_bytes_detectors[dst] = bytes_detector
-            bytes_detection = bytes_detector.evaluate(
-                total_bps, minimum_rate=0.0,
-                update_baseline=not connection_bytes_anomalous,
-            )
-
             entropy_detector = self._destination_entropy_detectors.setdefault(
                 dst, DestinationEntropyDetector(self._config)
             )
-            pps_anomalous = (
-                detection.status is DetectionStatus.ANOMALY
-                or connection_pps_anomalous
-            )
-            bytes_anomalous = (
-                bytes_detection.status is DetectionStatus.ANOMALY
-                or connection_bytes_anomalous
-            )
-            entropy_result = entropy_detector.evaluate(
-                source_packet_counts,
-                # Uma janela anômala de PPS ou bytes/s não contamina a baseline de H.
-                update_baseline=not (pps_anomalous or bytes_anomalous),
-            )
+            entropy_result = entropy_detector.evaluate(source_packet_counts)
 
-            entropy_anomalous = entropy_result.anomalous
-            if pps_anomalous or bytes_anomalous or entropy_anomalous:
-                self._stats.detections += 1
-                if entropy_anomalous:
-                    self._stats.distributed_events += 1
-                else:
-                    self._stats.concentrated_events += 1
+            # Mantém apenas origens recentes como candidatas à atribuição do DDoS.
+            lookback = max(self._config.baseline_samples, self._config.required_anomalies + 1)
+            candidates = self._destination_candidates.setdefault(dst, set())
+            recent_sources = {
+                src for src, rate in destination_rates.items()
+                if rate.pps > 0 and
+                cycle - self._pair_first_seen_cycle.get((src, dst), cycle) <= lookback
+            }
+            candidates.intersection_update(recent_sources)
+            candidates.update(recent_sources)
 
-            if detection.status is DetectionStatus.BASELINE:
-                # Um único progresso representa a coleta sincronizada das
-                # métricas do destino (PPS, bytes/s e entropia).
-                self._reporter.destination_baseline(
-                    dst, detection.baseline_size, self._config.baseline_samples,
-                    total_pps, total_bps, entropy_result.entropy_bits,
-                )
-            else:
-                self._reporter.destination_result(
-                    dst, total_pps, total_bps, detection, bytes_detection,
-                    entropy_result, self._config.required_anomalies,
-                )
-
-            if pps_anomalous or bytes_anomalous or entropy_anomalous:
-                self._reporter.destination_classification(
-                    dst, entropy_result, entropy_anomalous
-                )
-
-            # Guarda origens que começaram a transmitir recentemente. Isso
-            # permite atribuir ataques distribuídos formados por várias fontes
-            # novas, mesmo quando elas têm taxas semelhantes entre si e ainda
-            # não possuem referências individuais suficientes.
-            if pps_anomalous or bytes_anomalous or entropy_anomalous:
-                candidates = self._destination_candidates.setdefault(dst, set())
-                lookback = max(
-                    self._config.baseline_samples,
-                    self._config.required_anomalies + 1,
-                )
-                for src, rate in destination_rates.items():
-                    first_seen = self._pair_first_seen_cycle.get((src, dst), cycle)
-                    if (
-                        rate.pps > 0
-                        and cycle - first_seen <= lookback
-                    ):
-                        candidates.add(src)
-                candidates.update(connection_candidates)
-                self._destination_anomaly_start.setdefault(dst, cycle)
-            else:
-                # Uma anomalia que não persistiu não deve deixar candidatos
-                # antigos disponíveis para um evento futuro.
-                self._destination_candidates.pop(dst, None)
-                self._destination_anomaly_start.pop(dst, None)
-
-            confirmed = (
-                detection.should_block or bytes_detection.should_block
-                or entropy_result.should_block
-            )
-            if confirmed:
-                candidates = set(self._destination_candidates.get(dst, set()))
-                candidates.update(connection_candidates)
-                if candidates:
-                    self._reporter.destination_candidates(
-                        dst, sorted(candidates),
-                        "ANOMALIA AGREGADA/ENTROPIA E/OU CONEXÃO",
-                    )
-                    for src in sorted(candidates):
-                        if self._blocklist.is_blocked(src):
-                            continue
+            if dos_sources:
+                self._stats.detections += len(dos_sources)
+                self._stats.concentrated_events += 1
+                self._reporter.destination_candidates(dst, sorted(dos_sources), "DoS: PPS e/ou bytes/s por origem")
+                for src in sorted(dos_sources):
+                    if not self._blocklist.is_blocked(src):
                         datapath = self._datapath_for_ip(src)
                         if datapath is not None:
                             self._block(datapath, src)
+
+            if entropy_result.anomalous:
+                self._stats.detections += 1
+                self._stats.distributed_events += 1
+                self._reporter.destination_classification(dst, entropy_result, True)
+
+            if not entropy_result.baseline_ready:
+                self._reporter.destination_baseline(
+                    dst, entropy_result.baseline_size, self._config.baseline_samples,
+                    total_pps, total_bps, entropy_result.entropy_bits,
+                )
+            else:
+                pps_values = [float(rate.pps) for rate in destination_rates.values()]
+                bytes_values = [float(rate.bps) for rate in destination_rates.values()]
+                pps_mean = statistics.fmean(pps_values) if pps_values else 0.0
+                bytes_mean = statistics.fmean(bytes_values) if bytes_values else 0.0
+                pps_std = statistics.stdev(pps_values) if len(pps_values) > 1 else 0.0
+                bytes_std = statistics.stdev(bytes_values) if len(bytes_values) > 1 else 0.0
+                self._reporter.destination_result(
+                    dst, total_pps, total_bps, len(destination_rates),
+                    pps_mean, pps_std, bytes_mean, bytes_std,
+                    entropy_result, self._config.required_anomalies,
+                )
+
+            if entropy_result.should_block:
+                ddos_sources = sorted(candidates)
+                if ddos_sources:
+                    self._reporter.destination_candidates(
+                        dst, ddos_sources, "DDoS: entropia elevada e origens recentes"
+                    )
+                    for src in ddos_sources:
+                        if not self._blocklist.is_blocked(src):
+                            datapath = self._datapath_for_ip(src)
+                            if datapath is not None:
+                                self._block(datapath, src)
                 else:
                     self._reporter.destination_without_attribution(dst)
                 self._destination_candidates.pop(dst, None)
-                self._destination_anomaly_start.pop(dst, None)
-            elif connection_candidates:
-                # Uma conexão pode atingir seu próprio limite antes da
-                # confirmação agregada do destino.
-                for src in sorted(connection_candidates):
-                    if self._blocklist.is_blocked(src):
-                        continue
-                    datapath = self._datapath_for_ip(src)
-                    if datapath is not None:
-                        self._block(datapath, src)
+
+datapath, src)
 
 
 
