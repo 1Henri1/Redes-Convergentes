@@ -46,7 +46,7 @@ O script **não inicia pings automáticos** nem executa `pingall`. No prompt `mi
 h1 ping -c 10 h4
 ```
 
-A cada **5 segundos**, as métricas dos pings manuais observados pelo switch aparecem na própria linha `[TRÁFEGO/ANÁLISE]` do respectivo par origem-destino: enviados, recebidos, perdidos e RTT (último e médio). Os contadores são zerados após cada intervalo. Uma solicitação sem resposta é contabilizada como perdida após pelo menos 2 segundos, na próxima coleta do controlador. Essa medição é feita no controlador e pode incluir sobrecarga de processamento, portanto o RTT exibido pelo próprio comando `ping` é a referência de latência fim a fim. Para alterar os parâmetros:
+As métricas dos pings manuais observados pelo switch são acumuladas durante o período e aparecem no relatório periódico: enviados, recebidos, perdidos e RTT (último e médio). Os contadores são zerados após cada relatório. Uma solicitação sem resposta é contabilizada como perdida após pelo menos 2 segundos, na próxima coleta do controlador. Essa medição é feita no controlador e pode incluir sobrecarga de processamento, portanto o RTT exibido pelo próprio comando `ping` é a referência de latência fim a fim. Para alterar os parâmetros:
 
 ```bash
 sudo python3 tools/run_mininet.py --bw 10 --delay 20us --jitter 0us --queue 100 --loss 0
@@ -68,7 +68,7 @@ Não há tráfego de teste automático. O primeiro ping manual também permite a
 
 ## 3. Métricas e testes de detecção
 
-O controlador utiliza duas métricas por par IP origem-destino:
+O controlador separa a frequência de avaliação da frequência de impressão no terminal. Por padrão, avalia as métricas a cada **2 segundos** e imprime um relatório consolidado a cada **10 segundos**. Assim, cinco avaliações acontecem entre relatórios. A detecção, a confirmação de anomalias e a aplicação/expiração de bloqueios continuam ocorrendo em cada ciclo de avaliação; somente a apresentação no terminal é agrupada. Eventos e métricas observados no período são exibidos no relatório seguinte.\n\nO controlador utiliza duas métricas por par IP origem-destino:
 - **PPS:** pacotes por segundo.
 - **bytes/s:** volume de dados transmitidos por segundo, calculado a partir dos bytes observados.
 
@@ -209,11 +209,11 @@ sudo mn -c
 
 ## 6. Configuração
 
-Os parâmetros são lidos de variáveis de ambiente com prefixo `SDN_DDOS_`. Os que não forem definidos usam o padrão.
+Os parâmetros são lidos de variáveis de ambiente com prefixo `SDN_DDOS_`. Os que não forem definidos usam o padrão. `SDN_DDOS_MONITOR_INTERVAL` controla a frequência de avaliação; `SDN_DDOS_REPORT_INTERVAL` controla a frequência de impressão.
 
 | Variável | Padrão | Descrição |
 | --- | ---: | --- |
-| `SDN_DDOS_MONITOR_INTERVAL` | `5` | Segundos entre coletas de estatísticas |
+| `SDN_DDOS_MONITOR_INTERVAL` | `2` | Segundos entre coletas e avaliações das métricas |\n| `SDN_DDOS_REPORT_INTERVAL` | `10` | Segundos entre relatórios consolidados no terminal |
 | `SDN_DDOS_BASELINE_SAMPLES` | `5` | Amostras por destino para formar a linha de base estatística (mín. 2) |
 | `SDN_DDOS_HISTORY_SIZE` | `20` | Janela deslizante de amostras normais do histórico estatístico |
 | `SDN_DDOS_THRESHOLD_FACTOR` | `3` | Limite estatístico: média + fator × desvio padrão |
