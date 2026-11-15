@@ -65,7 +65,7 @@ class ConsoleReporter:
         def status(detection: Detection) -> str:
             # O progresso da baseline é exibido uma única vez na linha do destino.
             if detection.status is DetectionStatus.BASELINE:
-                return "coleta inicial"
+                return "contextual"
             if detection.status is DetectionStatus.ANOMALY:
                 return "ANOMALIA %s/%s" % (detection.consecutive_anomalies, required)
             return "NORMAL"
