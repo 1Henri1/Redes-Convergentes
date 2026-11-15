@@ -89,11 +89,11 @@ class DestinationEntropyDetector:
         # nesta mesma avaliação, evitando baseline_ready=True com campos None.
         mean = statistics.fmean(self._history)
         std = statistics.stdev(self._history)
-        # O incremento mínimo evita um limite praticamente nulo quando a
-        # distribuição normal permanece constante (por exemplo, H = 0).
+        # O fator mínimo exige que a entropia seja pelo menos 50% maior
+        # que a média da baseline, além do critério média + k desvios.
         limit = max(
             mean + self._config.entropy_threshold_factor * std,
-            mean + self._config.minimum_entropy_delta,
+            mean * self._config.minimum_entropy_factor,
         )
         anomalous = (
             source_count >= self._config.minimum_distributed_sources
