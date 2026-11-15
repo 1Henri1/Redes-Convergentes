@@ -55,6 +55,8 @@ class SdnDdosController(app_manager.OSKenApp):
         self._destination_detectors: Dict[str, DestinationPpsDetector] = {}
         # Apenas IPs que já foram observados como receptores entram no relatório agregado.
         self._known_destinations: set[str] = set()
+        # Quantos ciclos consecutivos cada destino permaneceu com PPS = 0.
+        self._destination_zero_cycles: Dict[str, int] = {}
         # Entropia independente por destino; caracteriza a distribuição das origens.
         self._destination_entropy_detectors: Dict[str, DestinationEntropyDetector] = {}
         # Ciclo em que cada par origem-destino começou a aparecer.
@@ -105,6 +107,7 @@ class SdnDdosController(app_manager.OSKenApp):
             for ip in disconnected_ips:
                 self._destination_detectors.pop(ip, None)
                 self._known_destinations.discard(ip)
+                self._destination_zero_cycles.pop(ip, None)
                 self._destination_entropy_detectors.pop(ip, None)
                 self._destination_anomaly_start.pop(ip, None)
                 self._destination_candidates.pop(ip, None)
@@ -184,6 +187,7 @@ class SdnDdosController(app_manager.OSKenApp):
         # uma vez por ciclo de monitoramento, inclusive com PPS = 0, até obter
         # as cinco amostras configuradas.
         self._destination_detectors[dst] = DestinationPpsDetector(self._config)
+        self._destination_zero_cycles[dst] = 0
         self._known_destinations.add(dst)
         self._reporter.baseline_started(dst, self._config.baseline_samples)
 
@@ -305,15 +309,40 @@ class SdnDdosController(app_manager.OSKenApp):
             }
             total_pps = sum(rate.pps for rate in destination_rates.values())
             total_bps = sum(rate.bps for rate in destination_rates.values())
+
+            # Dois ciclos consecutivos sem tráfego encerram o ciclo de vida
+            # deste destino: sua baseline PPS/entropia e histórico são descartados.
+            if total_pps <= 0:
+                self._destination_zero_cycles[dst] = (
+                    self._destination_zero_cycles.get(dst, 0) + 1
+                )
+                if self._destination_zero_cycles[dst] >= 2:
+                    self._destination_detectors.pop(dst, None)
+                    self._destination_entropy_detectors.pop(dst, None)
+                    self._known_destinations.discard(dst)
+                    self._destination_zero_cycles.pop(dst, None)
+                    self._destination_anomaly_start.pop(dst, None)
+                    self._destination_candidates.pop(dst, None)
+                    for pair in list(self._pair_first_seen_cycle):
+                        if pair[1] == dst:
+                            self._pair_first_seen_cycle.pop(pair, None)
+                            self._pair_last_seen_cycle.pop(pair, None)
+                    self._reporter.destination_expired(dst)
+                    continue
+            else:
+                self._destination_zero_cycles[dst] = 0
+
             source_packet_counts = {
                 src: rate.delta_packets
                 for src, rate in destination_rates.items()
                 if rate.delta_packets > 0
             }
 
-            detector = self._destination_detectors.setdefault(
-                dst, DestinationPpsDetector(self._config)
-            )
+            detector = self._destination_detectors.get(dst)
+            if detector is None:
+                detector = DestinationPpsDetector(self._config)
+                self._destination_detectors[dst] = detector
+                self._reporter.baseline_started(dst, self._config.baseline_samples)
             detection = detector.evaluate(total_pps)
 
             entropy_detector = self._destination_entropy_detectors.setdefault(
