@@ -1,7 +1,7 @@
 import pytest
 
 from sdn_ddos.config import DetectorConfig
-from sdn_ddos.detector import DestinationPpsDetector
+from sdn_ddos.detector import DestinationConnectionDetector, DestinationPpsDetector
 from sdn_ddos.models import DetectionStatus
 
 
@@ -143,8 +143,6 @@ def test_bytes_detector_does_not_use_pps_absolute_floor():
 
 from types import SimpleNamespace
 
-from sdn_ddos.detector import DestinationConnectionDetector
-
 
 def connection(pps, bps):
     return SimpleNamespace(pps=pps, bps=bps)
@@ -199,3 +197,18 @@ def test_connection_anomalies_do_not_update_normal_reference():
 
     assert result["10.0.0.4"]["PPS"].status is DetectionStatus.NORMAL
     assert result["10.0.0.4"]["PPS"].mean == pytest.approx(10)
+
+
+
+def test_aggregate_detector_can_skip_anomalous_baseline_samples():
+    detector = DestinationPpsDetector(make_config())
+    for _ in range(4):
+        detector.evaluate(100)
+    skipped = detector.evaluate(500, update_baseline=False)
+
+    assert skipped.status is DetectionStatus.BASELINE
+    assert skipped.baseline_size == 4
+
+    ready = detector.evaluate(100)
+    assert ready.status is DetectionStatus.BASELINE
+    assert ready.baseline_size == 5
