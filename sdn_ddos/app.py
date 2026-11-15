@@ -408,9 +408,6 @@ class SdnDdosController(app_manager.OSKenApp):
                     self._reporter.destination_without_attribution(dst)
                 self._destination_candidates.pop(dst, None)
 
-datapath, src)
-
-
 
     def _record_packet(self, pkt: packet.Packet) -> None:
         """Registra taxas e mede os pings manuais observados pelo switch."""
