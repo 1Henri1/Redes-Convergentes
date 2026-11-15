@@ -139,3 +139,63 @@ def test_bytes_detector_does_not_use_pps_absolute_floor():
 
     assert result.status is DetectionStatus.NORMAL
     assert result.limit == pytest.approx(3.0)
+
+
+from types import SimpleNamespace
+
+from sdn_ddos.detector import DestinationConnectionDetector
+
+
+def connection(pps, bps):
+    return SimpleNamespace(pps=pps, bps=bps)
+
+
+def test_connection_detector_flags_one_outlier_without_self_contamination():
+    detector = DestinationConnectionDetector(make_config())
+    normal = {f"10.0.0.{i}": connection(10, 100) for i in range(1, 11)}
+    detector.evaluate(normal, 1)
+
+    rates = dict(normal)
+    rates["10.0.0.10"] = connection(30, 300)
+    first = detector.evaluate(rates, 2)
+
+    assert first["10.0.0.10"]["PPS"].status is DetectionStatus.ANOMALY
+    assert first["10.0.0.10"]["PPS"].limit == pytest.approx(15)
+    assert first["10.0.0.10"]["BYTES/S"].status is DetectionStatus.ANOMALY
+    assert not first["10.0.0.10"]["PPS"].should_block
+
+    second = detector.evaluate(rates, 3)
+    assert second["10.0.0.10"]["PPS"].should_block
+    assert second["10.0.0.10"]["BYTES/S"].should_block
+
+
+def test_connection_detector_detects_coordinated_increase():
+    detector = DestinationConnectionDetector(make_config())
+    normal = {f"10.0.0.{i}": connection(10, 100) for i in range(1, 11)}
+    detector.evaluate(normal, 1)
+
+    increased = {src: connection(20, 200) for src in normal}
+    first = detector.evaluate(increased, 2)
+
+    assert all(
+        result["PPS"].status is DetectionStatus.ANOMALY
+        for result in first.values()
+    )
+    assert all(
+        result["BYTES/S"].status is DetectionStatus.ANOMALY
+        for result in first.values()
+    )
+
+
+def test_connection_anomalies_do_not_update_normal_reference():
+    detector = DestinationConnectionDetector(make_config())
+    normal = {f"10.0.0.{i}": connection(10, 100) for i in range(1, 5)}
+    detector.evaluate(normal, 1)
+
+    attacked = dict(normal)
+    attacked["10.0.0.4"] = connection(30, 300)
+    detector.evaluate(attacked, 2)
+    result = detector.evaluate(normal, 3)
+
+    assert result["10.0.0.4"]["PPS"].status is DetectionStatus.NORMAL
+    assert result["10.0.0.4"]["PPS"].mean == pytest.approx(10)
