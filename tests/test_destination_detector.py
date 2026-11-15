@@ -158,15 +158,40 @@ def test_connection_detector_uses_destination_mean_and_std_for_every_origin():
     first = detector.evaluate(rates, 2)
 
     assert first["10.0.0.10"]["PPS"].status is DetectionStatus.ANOMALY
-    assert first["10.0.0.10"]["PPS"].mean == pytest.approx(120 / 11)
-    assert first["10.0.0.10"]["PPS"].std == pytest.approx(20 / (11 ** 0.5), rel=0.02)
-    assert first["10.0.0.10"]["PPS"].limit == pytest.approx((120 / 11) + 3 * statistics.stdev([10] * 10 + [30]))
+    assert first["10.0.0.10"]["PPS"].mean == pytest.approx(10)
+    assert first["10.0.0.10"]["PPS"].std == pytest.approx(0)
+    assert first["10.0.0.10"]["PPS"].limit == pytest.approx(15)
     assert first["10.0.0.10"]["BYTES/S"].status is DetectionStatus.ANOMALY
+    assert first["10.0.0.10"]["BYTES/S"].mean == pytest.approx(100)
+    assert first["10.0.0.10"]["BYTES/S"].limit == pytest.approx(150)
     assert not first["10.0.0.10"]["PPS"].should_block
 
     second = detector.evaluate(rates, 3)
     assert second["10.0.0.10"]["PPS"].should_block
     assert second["10.0.0.10"]["BYTES/S"].should_block
+
+
+def test_two_simultaneous_dos_sources_are_excluded_from_both_means_and_blocked():
+    detector = DestinationConnectionDetector(make_config())
+    rates = {
+        "10.0.0.1": connection(9.6, 941),
+        "10.0.0.2": connection(9.6, 941),
+        "10.0.0.3": connection(9.6, 941),
+        "10.0.0.5": connection(24.78, 2428.73),
+        "10.0.0.6": connection(24.78, 2428.73),
+    }
+
+    first = detector.evaluate(rates, 1)
+    second = detector.evaluate(rates, 2)
+
+    for attacker in ("10.0.0.5", "10.0.0.6"):
+        assert first[attacker]["PPS"].status is DetectionStatus.ANOMALY
+        assert first[attacker]["BYTES/S"].status is DetectionStatus.ANOMALY
+        assert not first[attacker]["PPS"].should_block
+        assert second[attacker]["PPS"].should_block
+        assert second[attacker]["BYTES/S"].should_block
+        assert second[attacker]["PPS"].mean == pytest.approx(9.6)
+        assert second[attacker]["BYTES/S"].mean == pytest.approx(941)
 
 
 def test_two_origins_have_shared_destination_threshold_and_high_spread():
