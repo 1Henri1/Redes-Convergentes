@@ -25,6 +25,8 @@ class EntropyResult:
     std: Optional[float] = None
     limit: Optional[float] = None
     anomalous: bool = False
+    consecutive_anomalies: int = 0
+    should_block: bool = False
 
 
 def shannon_entropy(packet_counts: Mapping[str, int]) -> tuple[float, float, int, int]:
@@ -53,12 +55,14 @@ class DestinationEntropyDetector:
 
     A entropia elevada não dispara bloqueio sozinha. Ela caracteriza como
     distribuído um evento que já foi sinalizado pelo detector de PPS agregado.
-    Janelas de volume anômalo não atualizam a baseline.
+    Janelas de volume anômalo não atualizam a baseline. Uma elevação
+    persistente de entropia também pode acionar a mitigação por conta própria.
     """
 
     def __init__(self, config: DetectorConfig) -> None:
         self._config = config
         self._history: Deque[float] = deque(maxlen=config.history_size)
+        self._anomaly_streak = 0
 
     @property
     def baseline_ready(self) -> bool:
@@ -95,6 +99,14 @@ class DestinationEntropyDetector:
             source_count >= self._config.minimum_distributed_sources
             and entropy > limit
         )
+        if anomalous:
+            self._anomaly_streak += 1
+        else:
+            self._anomaly_streak = 0
+        should_block = anomalous and self._anomaly_streak >= self._config.required_anomalies
+        streak = self._anomaly_streak
+        if should_block:
+            self._anomaly_streak = 0
 
         # Não aprende a partir de distribuições atípicas nem durante uma
         # janela em que o PPS agregado já foi considerado anômalo.
@@ -104,4 +116,5 @@ class DestinationEntropyDetector:
         return EntropyResult(
             entropy, normalized, source_count, total_packets,
             len(self._history), True, mean, std, limit, anomalous,
+            streak, should_block,
         )
