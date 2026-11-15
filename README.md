@@ -213,7 +213,8 @@ Os parâmetros são lidos de variáveis de ambiente com prefixo `SDN_DDOS_`. Os 
 
 | Variável | Padrão | Descrição |
 | --- | ---: | --- |
-| `SDN_DDOS_MONITOR_INTERVAL` | `2` | Segundos entre coletas e avaliações das métricas |\n| `SDN_DDOS_REPORT_INTERVAL` | `10` | Segundos entre relatórios consolidados no terminal |
+| `SDN_DDOS_MONITOR_INTERVAL` | `2` | Segundos entre coletas e avaliações das métricas |
+| `SDN_DDOS_REPORT_INTERVAL` | `10` | Segundos entre relatórios consolidados no terminal |
 | `SDN_DDOS_BASELINE_SAMPLES` | `5` | Amostras por destino para formar a linha de base estatística (mín. 2) |
 | `SDN_DDOS_HISTORY_SIZE` | `20` | Janela deslizante de amostras normais do histórico estatístico |
 | `SDN_DDOS_THRESHOLD_FACTOR` | `3` | Limite estatístico: média + fator × desvio padrão |
@@ -224,7 +225,6 @@ Os parâmetros são lidos de variáveis de ambiente com prefixo `SDN_DDOS_`. Os 
 | `SDN_DDOS_MINIMUM_DISTRIBUTED_SOURCES` | `2` | Número mínimo de origens para caracterizar distribuição elevada |
 | `SDN_DDOS_REQUIRED_ANOMALIES` | `2` | Janelas anômalas consecutivas antes de bloquear |
 | `SDN_DDOS_BLOCK_TIME` | `30` | Duração do bloqueio em segundos |
-| `SDN_DDOS_SUMMARY_EVERY_CYCLES` | `6` | Imprime resumo a cada N ciclos (0 desativa) |
 | `SDN_DDOS_LOG_LEVEL` | `INFO` | Nível de log |
 
 Os testes devem ser realizados somente no ambiente controlado do Mininet. Para executar os testes unitários, instale `pytest` no ambiente virtual (`pip install pytest`) e execute `pytest -q tests/test_entropy.py`. Os testes adicionados cobrem o cálculo de entropia, normalização, baseline e exclusão de amostras anômalas.
