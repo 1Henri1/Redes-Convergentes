@@ -1,3 +1,4 @@
+import statistics
 from types import SimpleNamespace
 
 import pytest
@@ -147,7 +148,7 @@ def connection(pps, bps):
     return SimpleNamespace(pps=pps, bps=bps)
 
 
-def test_connection_detector_flags_one_outlier_against_current_peer_mean_std():
+def test_connection_detector_uses_destination_mean_and_std_for_every_origin():
     detector = DestinationConnectionDetector(make_config())
     normal = {f"10.0.0.{i}": connection(10, 100) for i in range(1, 11)}
     detector.evaluate(normal, 1)
@@ -157,9 +158,9 @@ def test_connection_detector_flags_one_outlier_against_current_peer_mean_std():
     first = detector.evaluate(rates, 2)
 
     assert first["10.0.0.10"]["PPS"].status is DetectionStatus.ANOMALY
-    assert first["10.0.0.10"]["PPS"].mean == pytest.approx(10)
-    assert first["10.0.0.10"]["PPS"].std == pytest.approx(0)
-    assert first["10.0.0.10"]["PPS"].limit == pytest.approx(15)
+    assert first["10.0.0.10"]["PPS"].mean == pytest.approx(120 / 11)
+    assert first["10.0.0.10"]["PPS"].std == pytest.approx(20 / (11 ** 0.5), rel=0.02)
+    assert first["10.0.0.10"]["PPS"].limit == pytest.approx((120 / 11) + 3 * statistics.stdev([10] * 10 + [30]))
     assert first["10.0.0.10"]["BYTES/S"].status is DetectionStatus.ANOMALY
     assert not first["10.0.0.10"]["PPS"].should_block
 
@@ -168,7 +169,7 @@ def test_connection_detector_flags_one_outlier_against_current_peer_mean_std():
     assert second["10.0.0.10"]["BYTES/S"].should_block
 
 
-def test_dos_can_be_detected_with_two_active_origins():
+def test_two_origins_have_shared_destination_threshold_and_high_spread():
     detector = DestinationConnectionDetector(make_config())
     rates = {
         "10.0.0.1": connection(10, 100),
@@ -178,9 +179,10 @@ def test_dos_can_be_detected_with_two_active_origins():
     first = detector.evaluate(rates, 1)
     second = detector.evaluate(rates, 2)
 
-    assert first["10.0.0.2"]["PPS"].status is DetectionStatus.ANOMALY
-    assert second["10.0.0.2"]["PPS"].should_block
-    assert second["10.0.0.2"]["BYTES/S"].should_block
+    assert first["10.0.0.2"]["PPS"].status is DetectionStatus.NORMAL
+    assert first["10.0.0.2"]["PPS"].mean == pytest.approx(20)
+    assert first["10.0.0.2"]["PPS"].limit > 30
+    assert second["10.0.0.2"]["PPS"].status is DetectionStatus.NORMAL
 
 
 def test_uniform_increase_is_not_individual_dos():
