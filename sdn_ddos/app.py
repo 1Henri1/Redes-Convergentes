@@ -333,11 +333,11 @@ class SdnDdosController(app_manager.OSKenApp):
             dos_sources = set()
             for src, metrics in connection_results.items():
                 pps_result, bytes_result = metrics["PPS"], metrics["BYTES/S"]
-                if pps_result.status is DetectionStatus.ANOMALY or bytes_result.status is DetectionStatus.ANOMALY:
-                    self._reporter.connection_result(
-                        src, dst, destination_rates[src], pps_result, bytes_result,
-                        self._config.required_anomalies,
-                    )
+                # Mostra os dois limites para todas as origens, inclusive as normais.
+                self._reporter.connection_result(
+                    src, dst, destination_rates[src], pps_result, bytes_result,
+                    self._config.required_anomalies,
+                )
                 if pps_result.should_block or bytes_result.should_block:
                     dos_sources.add(src)
 
@@ -383,8 +383,17 @@ class SdnDdosController(app_manager.OSKenApp):
                     total_pps, total_bps, entropy_result.entropy_bits,
                 )
             else:
-                pps_values = [float(rate.pps) for rate in destination_rates.values()]
-                bytes_values = [float(rate.bps) for rate in destination_rates.values()]
+                # As estatísticas exibidas também ignoram origens anômalas.
+                pps_values = [
+                    float(destination_rates[src].pps)
+                    for src, metrics in connection_results.items()
+                    if metrics["PPS"].status is not DetectionStatus.ANOMALY
+                ]
+                bytes_values = [
+                    float(destination_rates[src].bps)
+                    for src, metrics in connection_results.items()
+                    if metrics["BYTES/S"].status is not DetectionStatus.ANOMALY
+                ]
                 pps_mean = statistics.fmean(pps_values) if pps_values else 0.0
                 bytes_mean = statistics.fmean(bytes_values) if bytes_values else 0.0
                 pps_std = statistics.stdev(pps_values) if len(pps_values) > 1 else 0.0
