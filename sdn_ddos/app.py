@@ -27,7 +27,7 @@ from os_ken.ofproto import ofproto_v1_3
 
 from .blocklist import BlockList
 from .config import DetectorConfig
-from .detector import AnomalyDetector, DestinationPpsDetector
+from .detector import AnomalyDetector, DestinationConnectionDetector, DestinationPpsDetector
 from .entropy import DestinationEntropyDetector
 from .flow_manager import FlowManager
 from .host_table import HostTable
@@ -59,6 +59,8 @@ class SdnDdosController(app_manager.OSKenApp):
         self._known_destinations: set[str] = set()
         # Quantos ciclos consecutivos cada destino permaneceu com PPS = 0.
         self._destination_zero_cycles: Dict[str, int] = {}
+        # Comparação estatística entre as conexões de cada destino.
+        self._destination_connection_detectors: Dict[str, DestinationConnectionDetector] = {}
         # Entropia independente por destino; caracteriza a distribuição das origens.
         self._destination_entropy_detectors: Dict[str, DestinationEntropyDetector] = {}
         # Ciclo em que cada par origem-destino começou a aparecer.
@@ -111,6 +113,7 @@ class SdnDdosController(app_manager.OSKenApp):
                 self._destination_bytes_detectors.pop(ip, None)
                 self._known_destinations.discard(ip)
                 self._destination_zero_cycles.pop(ip, None)
+                self._destination_connection_detectors.pop(ip, None)
                 self._destination_entropy_detectors.pop(ip, None)
                 self._destination_anomaly_start.pop(ip, None)
                 self._destination_candidates.pop(ip, None)
@@ -313,6 +316,28 @@ class SdnDdosController(app_manager.OSKenApp):
             total_pps = sum(rate.pps for rate in destination_rates.values())
             total_bps = sum(rate.bps for rate in destination_rates.values())
 
+            # Avaliação transversal: cada origem é comparada às referências
+            # normais das demais conexões, sem participar da própria referência.
+            connection_detector = self._destination_connection_detectors.setdefault(
+                dst, DestinationConnectionDetector(self._config)
+            )
+            connection_results = connection_detector.evaluate(destination_rates, cycle)
+            connection_candidates = set()
+            for src, metric_results in connection_results.items():
+                pps_result = metric_results["PPS"]
+                bytes_result = metric_results["BYTES/S"]
+                if (
+                    pps_result.status is DetectionStatus.ANOMALY
+                    or bytes_result.status is DetectionStatus.ANOMALY
+                ):
+                    self._reporter.connection_result(
+                        src, dst, destination_rates[src], pps_result, bytes_result,
+                        self._config.required_anomalies,
+                    )
+                if pps_result.should_block or bytes_result.should_block:
+                    connection_candidates.add(src)
+
+
             # Dois ciclos consecutivos sem tráfego encerram o ciclo de vida
             # deste destino: sua baseline PPS/entropia e histórico são descartados.
             if total_pps <= 0:
@@ -322,6 +347,7 @@ class SdnDdosController(app_manager.OSKenApp):
                 if self._destination_zero_cycles[dst] >= 2:
                     self._destination_detectors.pop(dst, None)
                     self._destination_bytes_detectors.pop(dst, None)
+                    self._destination_connection_detectors.pop(dst, None)
                     self._destination_entropy_detectors.pop(dst, None)
                     self._known_destinations.discard(dst)
                     self._destination_zero_cycles.pop(dst, None)
@@ -390,53 +416,27 @@ class SdnDdosController(app_manager.OSKenApp):
                 )
 
             if pps_anomalous or bytes_anomalous or entropy_anomalous:
-                # PPS, bytes/s e entropia podem iniciar a atribuição independentemente.
-                # Só entram como candidatas origens que surgiram durante a
-                # janela anômala, preservando emissores estáveis anteriores.
                 self._reporter.destination_classification(
                     dst, entropy_result, entropy_anomalous
                 )
-                start_cycle = self._destination_anomaly_start.setdefault(dst, cycle)
-                candidates = self._destination_candidates.setdefault(dst, set())
-                for (src, target), _rate in active_rates.items():
-                    if (
-                        target == dst
-                        and self._pair_first_seen_cycle.get((src, dst), cycle) >= start_cycle
-                    ):
-                        candidates.add(src)
 
-                if bytes_anomalous and destination_rates:
-                    # Para uma elevação de volume, atribui o evento à origem
-                    # que mais contribuiu em bytes/s, mesmo que já fosse ativa.
-                    top_source = max(
-                        destination_rates.items(), key=lambda item: item[1].bps
-                    )
-                    if top_source[1].bps > 0:
-                        candidates.add(top_source[0])
-
-                if detection.should_block or bytes_detection.should_block or entropy_result.should_block:
-                    if entropy_result.should_block:
-                        trigger = "ENTROPIA"
-                    elif bytes_detection.should_block:
-                        trigger = "BYTES/S"
-                    else:
-                        trigger = "PPS"
-                    self._reporter.destination_candidates(dst, sorted(candidates), trigger)
-                    blocked_any = False
-                    for src in sorted(candidates):
-                        if self._blocklist.is_blocked(src):
-                            continue
-                        datapath = self._datapath_for_ip(src)
-                        if datapath is not None:
-                            self._block(datapath, src)
-                            blocked_any = True
-                    if not blocked_any:
-                        self._reporter.destination_without_attribution(dst)
-                    self._destination_anomaly_start.pop(dst, None)
-                    self._destination_candidates.pop(dst, None)
-            else:
-                self._destination_anomaly_start.pop(dst, None)
-                self._destination_candidates.pop(dst, None)
+            # Alertas agregados e entropia caracterizam o evento, mas só
+            # origens individualmente anômalas são elegíveis para bloqueio.
+            if connection_candidates:
+                self._reporter.destination_candidates(
+                    dst, sorted(connection_candidates), "PPS E/OU BYTES/S POR CONEXÃO"
+                )
+                for src in sorted(connection_candidates):
+                    if self._blocklist.is_blocked(src):
+                        continue
+                    datapath = self._datapath_for_ip(src)
+                    if datapath is not None:
+                        self._block(datapath, src)
+            elif (
+                detection.should_block or bytes_detection.should_block
+                or entropy_result.should_block
+            ):
+                self._reporter.destination_without_attribution(dst)
 
 
     def _record_packet(self, pkt: packet.Packet) -> None:
