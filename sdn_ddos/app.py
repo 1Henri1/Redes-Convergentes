@@ -354,9 +354,11 @@ class SdnDdosController(app_manager.OSKenApp):
                 update_baseline=(detection.status is not DetectionStatus.ANOMALY),
             )
 
-            if detection.status is DetectionStatus.ANOMALY:
+            pps_anomalous = detection.status is DetectionStatus.ANOMALY
+            entropy_anomalous = entropy_result.anomalous
+            if pps_anomalous or entropy_anomalous:
                 self._stats.detections += 1
-                if entropy_result.anomalous:
+                if entropy_anomalous:
                     self._stats.distributed_events += 1
                 else:
                     self._stats.concentrated_events += 1
@@ -374,24 +376,27 @@ class SdnDdosController(app_manager.OSKenApp):
                     self._config.required_anomalies,
                 )
 
-            if detection.status is DetectionStatus.ANOMALY:
+            if pps_anomalous or entropy_anomalous:
+                # PPS e entropia podem iniciar a atribuição independentemente.
+                # Só entram como candidatas origens que surgiram durante a
+                # janela anômala, preservando emissores estáveis anteriores.
                 self._reporter.destination_classification(
-                    dst, entropy_result, entropy_result.anomalous
+                    dst, entropy_result, entropy_anomalous
                 )
                 start_cycle = self._destination_anomaly_start.setdefault(dst, cycle)
                 candidates = self._destination_candidates.setdefault(dst, set())
-                # Só considera origens que começaram a contribuir na janela
-                # em que a anomalia apareceu. Emissores estáveis anteriores
-                # não são bloqueados apenas por enviarem muito PPS.
                 for (src, target), _rate in active_rates.items():
-                    if target == dst and self._pair_first_seen_cycle.get((src, dst), cycle) >= start_cycle:
+                    if (
+                        target == dst
+                        and self._pair_first_seen_cycle.get((src, dst), cycle) >= start_cycle
+                    ):
                         candidates.add(src)
 
-                if detection.should_block:
+                if detection.should_block or entropy_result.should_block:
+                    trigger = "ENTROPIA" if entropy_result.should_block else "PPS"
+                    self._reporter.destination_candidates(dst, sorted(candidates), trigger)
                     blocked_any = False
-                    candidate_list = sorted(candidates)
-                    self._reporter.destination_candidates(dst, candidate_list)
-                    for src in candidate_list:
+                    for src in sorted(candidates):
                         if self._blocklist.is_blocked(src):
                             continue
                         datapath = self._datapath_for_ip(src)
