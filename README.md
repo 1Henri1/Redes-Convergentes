@@ -213,7 +213,7 @@ Os parâmetros são lidos de variáveis de ambiente com prefixo `SDN_DDOS_`. Os 
 
 | Variável | Padrão | Descrição |
 | --- | ---: | --- |
-| `SDN_DDOS_MONITOR_INTERVAL` | `2` | Segundos entre coletas e avaliações das métricas |
+| `SDN_DDOS_MONITOR_INTERVAL` | `5` | Segundos entre coletas e avaliações das métricas |
 | `SDN_DDOS_REPORT_INTERVAL` | `10` | Segundos entre relatórios consolidados no terminal |
 | `SDN_DDOS_BASELINE_SAMPLES` | `5` | Amostras por destino para formar a linha de base estatística (mín. 2) |
 | `SDN_DDOS_HISTORY_SIZE` | `20` | Janela deslizante de amostras normais do histórico estatístico |
