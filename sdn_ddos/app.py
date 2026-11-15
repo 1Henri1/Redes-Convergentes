@@ -326,14 +326,8 @@ class SdnDdosController(app_manager.OSKenApp):
             else:
                 self._destination_zero_cycles[dst] = 0
 
-            # DoS: PPS e bytes/s são comparados transversalmente entre origens.
-            connection_detector = self._destination_connection_detectors.setdefault(
-                dst, DestinationConnectionDetector(self._config)
-            )
-            connection_results = connection_detector.evaluate(destination_rates, cycle)
-            # DDoS: avalia a distribuição antes de permitir que bytes/s
-            # atualize sua baseline global.
-
+            # DDoS é avaliado primeiro para que uma distribuição suspeita
+            # não entre nos cálculos estatísticos transversais do destino.
             source_packet_counts = {
                 src: rate.delta_packets for src, rate in destination_rates.items()
                 if rate.delta_packets > 0
@@ -342,6 +336,17 @@ class SdnDdosController(app_manager.OSKenApp):
                 dst, DestinationEntropyDetector(self._config)
             )
             entropy_result = entropy_detector.evaluate(source_packet_counts)
+
+            connection_detector = self._destination_connection_detectors.setdefault(
+                dst, DestinationConnectionDetector(self._config)
+            )
+            if entropy_result.anomalous:
+                # Suspende a análise transversal durante o padrão distribuído
+                # e zera sequências antigas para não misturar ciclos separados.
+                connection_detector.reset()
+                connection_results = {}
+            else:
+                connection_results = connection_detector.evaluate(destination_rates, cycle)
 
             # Avalia bytes/s somente depois da entropia. Se o destino estiver
             # suspeito de DDoS, nenhuma amostra dele atualiza a baseline global.
