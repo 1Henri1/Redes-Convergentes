@@ -164,20 +164,59 @@ class DestinationConnectionDetector:
             ("BYTES/S", lambda rate: float(rate.bps), 0.0),
         )
 
-        # A referência é calculada uma vez por destino e por métrica,
-        # incluindo todas as origens ativas, inclusive a que será avaliada.
+        # PPS usa média + 1 desvio; bytes/s mantém o fator configurado.
+        # Primeiro identificamos outliers por sigma-clipping. Eles são removidos
+        # do conjunto de referência e os limites são recalculados, evitando que
+        # os próprios atacantes elevem a média e escondam uns aos outros.
         limits = {}
+        anomalous_sources = {}
         for metric, getter, floor in metrics:
-            values = [getter(rate) for rate in rates.values()]
+            values = {src: getter(rate) for src, rate in rates.items()}
             if not values:
                 continue
-            mean = statistics.fmean(values)
-            std = statistics.stdev(values) if len(values) > 1 else 0.0
-            limit = max(
-                mean + self._config.threshold_factor * std,
-                mean * self._config.min_rate_factor,
-                floor,
-            )
+
+            factor = 1.0 if metric == "PPS" else self._config.threshold_factor
+            reference_sources = set(values)
+            while reference_sources:
+                reference_values = [values[src] for src in reference_sources]
+                mean = statistics.fmean(reference_values)
+                std = (
+                    statistics.stdev(reference_values)
+                    if len(reference_values) > 1 else 0.0
+                )
+                limit = max(
+                    mean + factor * std,
+                    mean * self._config.min_rate_factor,
+                    floor,
+                )
+                outliers = {
+                    src for src in reference_sources if values[src] > limit
+                }
+                if not outliers:
+                    break
+                reference_sources.difference_update(outliers)
+
+            # Recalcula a referência final somente com origens não anômalas.
+            reference_values = [values[src] for src in reference_sources]
+            if reference_values:
+                mean = statistics.fmean(reference_values)
+                std = (
+                    statistics.stdev(reference_values)
+                    if len(reference_values) > 1 else 0.0
+                )
+                limit = max(
+                    mean + factor * std,
+                    mean * self._config.min_rate_factor,
+                    floor,
+                )
+            else:
+                mean = statistics.fmean(values.values())
+                std = statistics.stdev(values.values()) if len(values) > 1 else 0.0
+                limit = max(mean + factor * std, mean * self._config.min_rate_factor, floor)
+
+            anomalous_sources[metric] = {
+                src for src, value in values.items() if value > limit
+            }
             limits[metric] = (mean, std, limit, getter)
 
         for src, rate in rates.items():
