@@ -68,7 +68,9 @@ Não há tráfego de teste automático. O primeiro ping manual também permite a
 
 ## 3. Métricas e testes de detecção
 
-O controlador separa a frequência de avaliação da frequência de impressão no terminal. Por padrão, avalia as métricas a cada **2 segundos** e imprime um relatório consolidado a cada **10 segundos**. Assim, cinco avaliações acontecem entre relatórios. A detecção, a confirmação de anomalias e a aplicação/expiração de bloqueios continuam ocorrendo em cada ciclo de avaliação; somente a apresentação no terminal é agrupada. Eventos e métricas observados no período são exibidos no relatório seguinte.\n\nO controlador utiliza duas métricas por par IP origem-destino:
+O controlador separa a frequência de avaliação da frequência de impressão no terminal. Por padrão, avalia as métricas a cada **5 segundos** e imprime um relatório consolidado a cada **10 segundos**. Assim, cinco avaliações acontecem entre relatórios. A detecção e a aplicação/expiração de bloqueios ocorrem em cada ciclo; somente a apresentação no terminal é agrupada. Eventos e métricas observados no período são exibidos no relatório seguinte.
+
+O controlador utiliza duas métricas por par IP origem-destino:
 - **PPS:** pacotes por segundo.
 - **bytes/s:** volume de dados transmitidos por segundo, calculado a partir dos bytes observados.
 
@@ -78,7 +80,7 @@ Para **DDoS**, a entropia de Shannon das origens é o único critério de classi
 
 **Gerador de tráfego:** `tools/generate_traffic.py` gera tráfego TCP ou UDP para testar o monitoramento de PPS e bytes/s. Embora possa abrir várias conexões ou sockets, o controlador não usa a quantidade de fluxos como métrica de detecção. O tamanho e o intervalo dos envios influenciam o volume observado; os resultados reais dependem do comportamento do sistema e devem ser conferidos nos logs do controlador.
 
-Inicie os testes com um ping manual para o controlador aprender os hosts. Durante a calibração, mantenha tráfego normal e aguarde a formação da baseline individual de cada destino e a exibição de seus limites no log. Os comandos abaixo assumem a topologia `single,4` (h1–h4) e que o repositório está acessível no sistema de arquivos da VM.
+Inicie os testes com um ping manual para o controlador aprender os hosts. Durante a calibração, mantenha tráfego normal e aguarde a formação da baseline de entropia de cada destino. Os comandos abaixo assumem a topologia `single,4` (h1–h4) e que o repositório está acessível no sistema de arquivos da VM.
 
 
 ### Cenário automático de pings (editável por métodos)
