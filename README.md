@@ -38,7 +38,7 @@ Use o novo iniciador de rede. Ele aplica largura de banda, atraso, jitter e fila
 sudo python3 tools/run_mininet.py
 ```
 
-Parâmetros padrão por enlace: **10 Mbps**, **20 µs de atraso**, **0 µs de jitter**, fila de **100 pacotes** e **0% de perda artificial**. O caminho h1→h4 e a resposta atravessam quatro enlaces no total, portanto o atraso configurado contribui com cerca de **0,5 ms (500 µs) de RTT teórico**. O RTT real medido pode ser maior por causa do processamento do Linux, Mininet, Open vSwitch e controlador; esse valor é um alvo de configuração, não uma garantia.
+Parâmetros padrão por enlace: **0.1 Mbps**, **100 µs de atraso**, **0 µs de jitter**, fila de **100 pacotes** e **0% de perda artificial**. O caminho h1→h4 e a resposta atravessam quatro enlaces no total, portanto o atraso configurado contribui com cerca de **0,4 ms (400 µs) de RTT teórico**. O RTT real medido pode ser maior por causa do processamento do Linux, Mininet, Open vSwitch e controlador; esse valor é um alvo de configuração, não uma garantia.
 
 O script **não inicia pings automáticos** nem executa `pingall`. No prompt `mininet>`, envie manualmente, por exemplo:
 
@@ -49,7 +49,7 @@ h1 ping -c 10 h4
 As métricas dos pings manuais observados pelo switch são acumuladas durante o período e aparecem no relatório periódico: enviados, recebidos, perdidos e RTT (último e médio). Os contadores são zerados após cada relatório. Uma solicitação sem resposta é contabilizada como perdida após pelo menos 2 segundos, na próxima coleta do controlador. Essa medição é feita no controlador e pode incluir sobrecarga de processamento, portanto o RTT exibido pelo próprio comando `ping` é a referência de latência fim a fim. Para alterar os parâmetros:
 
 ```bash
-sudo python3 tools/run_mininet.py --bw 10 --delay 20us --jitter 0us --queue 100 --loss 0
+sudo python3 tools/run_mininet.py --bw 0.1 --delay 100us --jitter 0us --queue 100 --loss 0
 ```
 
 `--loss` adiciona perda artificial; mantenha em `0` para medir perdas causadas por congestionamento. O controlador deixa de exibir um par origem-destino quando ele registra **zero pacotes em duas coletas consecutivas**. Com o intervalo padrão de 5 segundos, isso corresponde a aproximadamente 10 segundos sem pacotes; quando o tráfego voltar, o par reaparece após uma nova coleta inicial.
@@ -211,11 +211,8 @@ Os parâmetros são lidos de variáveis de ambiente com prefixo `SDN_DDOS_`. Os 
 | `SDN_DDOS_HISTORY_SIZE` | `20` | Janela deslizante de amostras normais do histórico estatístico |
 | `SDN_DDOS_THRESHOLD_FACTOR` | `3` | Limite estatístico: média + fator × desvio padrão |
 | `SDN_DDOS_MIN_RATE_FACTOR` | `1.5` | Taxa também deve superar média × fator |
-| `SDN_DDOS_MINIMUM_PPS` | `10.0` | Piso absoluto do limite de PPS, agregado e por conexão (não aplicado a bytes/s) |
-| `SDN_DDOS_ENTROPY_THRESHOLD_FACTOR` | `3.0` | Fator de desvio padrão para o limite de entropia |
-| `SDN_DDOS_MINIMUM_ENTROPY_FACTOR` | `1.5` | Fator mínimo multiplicativo aplicado à média da entropia |
-| `SDN_DDOS_MINIMUM_DISTRIBUTED_SOURCES` | `2` | Número mínimo de origens para caracterizar distribuição elevada |
-| `SDN_DDOS_REQUIRED_ANOMALIES` | `2` | Janelas anômalas consecutivas de PPS ou entropia antes de bloquear |
+| `SDN_DDOS_MINIMUM_PPS` | `10.0` | Piso absoluto do limite para evitar alertas quando a média é próxima de zero |
+| `SDN_DDOS_REQUIRED_ANOMALIES` | `2` | Janelas anômalas consecutivas antes de bloquear |
 | `SDN_DDOS_BLOCK_TIME` | `30` | Duração do bloqueio em segundos |
 | `SDN_DDOS_LOG_LEVEL` | `INFO` | Nível de log |
 
