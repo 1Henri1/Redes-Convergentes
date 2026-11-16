@@ -8,9 +8,9 @@ from typing import Optional
 class DetectionStatus(Enum):
     """Resultado da análise de uma amostra de tráfego."""
 
-    BASELINE = "baseline"  # ainda coletando a linha de base
-    NORMAL = "normal"      # dentro do limite
-    ANOMALY = "anomaly"    # acima do limite
+    BASELINE = "baseline"
+    NORMAL = "normal"
+    ANOMALY = "anomaly"
 
 
 @dataclass(frozen=True)
@@ -20,16 +20,12 @@ class PortRate:
     delta_packets: int
     delta_bytes: int
     pps: float
-    bps: float  
+    bps: float
 
 
 @dataclass(frozen=True)
 class Detection:
-    """Veredito do detector para uma amostra de taxa (PPS ou bytes/s).
-
-    ``mean``, ``std`` e ``limit`` só são preenchidos depois que a linha de
-    base está formada.
-    """
+    """Veredito do detector para uma amostra de taxa."""
 
     status: DetectionStatus
     pps: float
@@ -47,3 +43,5 @@ class ControllerStats:
 
     detections: int = 0
     blocks: int = 0
+    distributed_events: int = 0
+    concentrated_events: int = 0

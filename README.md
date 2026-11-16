@@ -1,6 +1,6 @@
 # SDN DDoS Controller
 
-Controlador SDN desenvolvido em Python utilizando **OS-Ken**, **Mininet** e **Open vSwitch**, com monitoramento de tráfego, detecção estatística por par IP origem-destino e bloqueio temporário de IPs.
+Controlador SDN desenvolvido em Python utilizando **OS-Ken**, **Mininet** e **Open vSwitch**, com monitoramento de tráfego, detecção individual de DoS por PPS/bytes/s e detecção de DDoS por entropia e bloqueio temporário das origens identificadas.
 
 ## 1. Instalar dependências
 
@@ -46,7 +46,7 @@ O script **não inicia pings automáticos** nem executa `pingall`. No prompt `mi
 h1 ping -c 10 h4
 ```
 
-A cada **5 segundos**, as métricas dos pings manuais observados pelo switch aparecem na própria linha `[TRÁFEGO/ANÁLISE]` do respectivo par origem-destino: enviados, recebidos, perdidos e RTT (último e médio). Os contadores são zerados após cada intervalo. Uma solicitação sem resposta é contabilizada como perdida após pelo menos 2 segundos, na próxima coleta do controlador. Essa medição é feita no controlador e pode incluir sobrecarga de processamento, portanto o RTT exibido pelo próprio comando `ping` é a referência de latência fim a fim. Para alterar os parâmetros:
+As métricas dos pings manuais observados pelo switch são acumuladas durante o período e aparecem no relatório periódico: enviados, recebidos, perdidos e RTT (último e médio). Os contadores são zerados após cada relatório. Uma solicitação sem resposta é contabilizada como perdida após pelo menos 2 segundos, na próxima coleta do controlador. Essa medição é feita no controlador e pode incluir sobrecarga de processamento, portanto o RTT exibido pelo próprio comando `ping` é a referência de latência fim a fim. Para alterar os parâmetros:
 
 ```bash
 sudo python3 tools/run_mininet.py --bw 0.1 --delay 100us --jitter 0us --queue 100 --loss 0
@@ -68,15 +68,78 @@ Não há tráfego de teste automático. O primeiro ping manual também permite a
 
 ## 3. Métricas e testes de detecção
 
+O controlador separa a frequência de avaliação da frequência de impressão no terminal. Por padrão, avalia as métricas a cada **5 segundos** e imprime um relatório consolidado a cada **10 segundos**. Assim, cinco avaliações acontecem entre relatórios. A detecção e a aplicação/expiração de bloqueios ocorrem em cada ciclo; somente a apresentação no terminal é agrupada. Eventos e métricas observados no período são exibidos no relatório seguinte.
+
 O controlador utiliza duas métricas por par IP origem-destino:
 - **PPS:** pacotes por segundo.
 - **bytes/s:** volume de dados transmitidos por segundo, calculado a partir dos bytes observados.
 
-Cada métrica tem seu próprio detector estatístico, com baseline global inicializada pelas amostras positivas do primeiro par observado. O limite considera média + fator × desvio padrão, média × fator mínimo e, para PPS, um piso absoluto. A baseline deve ser formada antes da classificação. Taxas anômalas não são adicionadas ao histórico; taxas normais podem atualizar a baseline. Uma origem só é bloqueada quando PPS ou bytes/s apresenta anomalias persistentes pelo número de janelas configurado. O bloqueio é temporário.
+A detecção separa **DoS** e **DDoS**. Para **DoS**, cada origem é comparada às demais origens ativas do mesmo destino, separadamente para PPS e bytes/s. A origem avaliada é excluída do cálculo. Em cada ciclo, a média é a soma das taxas das outras origens dividida pela quantidade delas, e o desvio padrão é calculado sobre esses mesmos valores. O limite é o maior entre média + 3 × desvio padrão, média × fator mínimo e o piso configurado (somente PPS usa o piso absoluto). A anomalia precisa persistir pelo número configurado de ciclos para bloquear apenas a origem responsável. Se todas as origens aumentarem de forma semelhante, isso não gera vários bloqueios individuais.
+
+Para **DDoS**, a entropia de Shannon das origens é o único critério de classificação e confirmação. Para cada janela, a proporção de pacotes da origem i é `p_i = P_i / Σ_j P_j`, e a entropia é `H = -Σ_i p_i log₂(p_i)`. A saída mostra H, H normalizada, número de origens e limite estatístico. Uma entropia acima do limite, com o número mínimo de origens e persistente pelo número configurado de ciclos, caracteriza possível DDoS. Nesse caso, o controlador bloqueia somente as origens que começaram a transmitir recentemente para aquele destino, evitando bloquear emissores antigos sem relação com o evento. PPS e bytes/s agregados não classificam nem confirmam DDoS e não acionam bloqueio por destino.
 
 **Gerador de tráfego:** `tools/generate_traffic.py` gera tráfego TCP ou UDP para testar o monitoramento de PPS e bytes/s. Embora possa abrir várias conexões ou sockets, o controlador não usa a quantidade de fluxos como métrica de detecção. O tamanho e o intervalo dos envios influenciam o volume observado; os resultados reais dependem do comportamento do sistema e devem ser conferidos nos logs do controlador.
 
-Inicie os testes com um ping manual para o controlador aprender os hosts. Durante a calibração, gere tráfego normal e aguarde aparecerem os limites globais no log. Os comandos abaixo assumem a topologia `single,4` (h1–h4) e que o repositório está acessível no sistema de arquivos da VM.
+Inicie os testes com um ping manual para o controlador aprender os hosts. Durante a calibração, mantenha tráfego normal e aguarde a formação da baseline de entropia de cada destino. Os comandos abaixo assumem a topologia `single,4` (h1–h4) e que o repositório está acessível no sistema de arquivos da VM.
+
+
+### Cenário automático de pings (editável por métodos)
+
+O cenário automático é opcional. Primeiro, edite diretamente o método `main()` em `tools/ping_scenario.py`. A sequência inicial já contém dois blocos:
+
+1. `normal`: h1 e h2 enviam até 100 pings cada para h10, com intervalo de 1 segundo e payload de 56 bytes.
+2. `sobrecarga`: h3, h4, h5 e h6 enviam até 500 pings cada para h10, com intervalo de 100 ms e payload de 56 bytes, enquanto o primeiro grupo continua ativo.
+
+Para executar a sequência, inicie o controlador no terminal 1 e rode no terminal 2:
+
+```bash
+sudo python3 tools/run_mininet.py --auto-ping-test
+```
+
+A CLI do Mininet continua disponível enquanto o cenário roda em segundo plano. Os processos são encerrados ao final da sequência ou quando a rede é fechada.
+
+#### Como editar o cenário
+
+Abra `tools/ping_scenario.py` e modifique somente o método `main()` para organizar as etapas. Os métodos disponíveis são:
+
+- `start_pings(group, sources, destination, interval, count, packet_size)`: inicia pings simultâneos para cada host de `sources`. `interval` define o intervalo em segundos (`-i`), `count` define o máximo de pacotes por origem (`-c`) e `packet_size` define o tamanho do payload em bytes (`-s`).
+- `wait(seconds)`: aguarda o tempo indicado. Os grupos já iniciados continuam enviando durante a pausa.
+- `stop_pings(group)`: encerra apenas o grupo indicado.
+- `stop_all()`: encerra todos os grupos ativos.
+
+Exemplo de sequência com três blocos:
+
+```python
+def main(self):
+    self.start_pings(
+        "normal", ["h1", "h2"], "h10",
+        interval=1.0, count=100, packet_size=56
+    )
+    self.wait(35)
+
+    self.start_pings(
+        "sobrecarga_1", ["h3", "h4"], "h10",
+        interval=0.1, count=500, packet_size=128
+    )
+    self.wait(20)
+
+    self.start_pings(
+        "sobrecarga_2", ["h5", "h6", "h7"], "h10",
+        interval=0.05, count=1000, packet_size=256
+    )
+    self.wait(30)
+
+    self.stop_pings("sobrecarga_2")
+    self.wait(10)  # o grupo normal e sobrecarga_1 continuam ativos
+
+    self.stop_all()
+```
+
+Para acrescentar máquinas, basta incluir seus nomes nas listas, desde que existam na topologia. Para criar outra etapa, adicione outra chamada a `start_pings()`. Uma pausa com `wait()` não interrompe os grupos anteriores. Use nomes de grupo diferentes para cada conjunto que deseja controlar separadamente. Os três parâmetros do ping são configurados diretamente em cada chamada: `interval` (`-i`), `count` (`-c`, quantidade máxima por host) e `packet_size` (`-s`, tamanho do payload em bytes). Se `wait()` ou `stop_pings()` encerrar o grupo antes, os processos são interrompidos mesmo que não tenham enviado toda a quantidade configurada. O tamanho passado a `-s` é o payload ICMP, não o tamanho total do quadro Ethernet.
+
+O iniciador usa apenas `--auto-ping-test`; os parâmetros do experimento ficam no próprio arquivo Python, evitando precisar alterar a linha de comando a cada teste. Sem essa opção, nenhum ping automático é iniciado.
+
+**Observação:** este cenário gera tráfego ICMP de teste somente na topologia Mininet local. A taxa observada depende da largura de banda, das filas e da capacidade da VM. Se a rede saturar antes da formação da baseline, aumente a largura de banda ou reduza a intensidade do teste.
 
 ### Tráfego normal
 
@@ -130,21 +193,27 @@ E limpe os recursos:
 sudo mn -c
 ```
 
+### Expiração de destinos inativos
+
+Um destino é removido do monitoramento quando apresenta **0 PPS em dois ciclos consecutivos de avaliação**. Nessa remoção, o controlador descarta as baselines de PPS e entropia, o histórico de anomalias e os candidatos associados. Um único ciclo com 0 PPS não remove o destino: se houver tráfego no ciclo seguinte, o contador de inatividade volta a zero.
+
+Quando uma nova solicitação de comunicação for observada para esse destino (TCP SYN inicial, UDP ou ICMP Echo Request), o controlador cria uma nova baseline. As cinco amostras são coletadas novamente, uma por ciclo de avaliação, antes de iniciar a detecção.
+
 ## 6. Configuração
 
-Os parâmetros são lidos de variáveis de ambiente com prefixo `SDN_DDOS_`. Os que não forem definidos usam o padrão.
+Os parâmetros são lidos de variáveis de ambiente com prefixo `SDN_DDOS_`. Os que não forem definidos usam o padrão. `SDN_DDOS_MONITOR_INTERVAL` controla a frequência de avaliação; `SDN_DDOS_REPORT_INTERVAL` controla a frequência de impressão.
 
 | Variável | Padrão | Descrição |
 | --- | ---: | --- |
-| `SDN_DDOS_MONITOR_INTERVAL` | `5` | Segundos entre coletas de estatísticas |
-| `SDN_DDOS_BASELINE_SAMPLES` | `5` | Amostras do primeiro par origem-destino para formar a linha de base estatística (mín. 2) |
+| `SDN_DDOS_MONITOR_INTERVAL` | `5` | Segundos entre coletas e avaliações das métricas |
+| `SDN_DDOS_REPORT_INTERVAL` | `10` | Segundos entre relatórios consolidados no terminal |
+| `SDN_DDOS_BASELINE_SAMPLES` | `5` | Amostras por destino para formar a linha de base estatística (mín. 2) |
 | `SDN_DDOS_HISTORY_SIZE` | `20` | Janela deslizante de amostras normais do histórico estatístico |
 | `SDN_DDOS_THRESHOLD_FACTOR` | `3` | Limite estatístico: média + fator × desvio padrão |
 | `SDN_DDOS_MIN_RATE_FACTOR` | `1.5` | Taxa também deve superar média × fator |
 | `SDN_DDOS_MINIMUM_PPS` | `10.0` | Piso absoluto do limite para evitar alertas quando a média é próxima de zero |
 | `SDN_DDOS_REQUIRED_ANOMALIES` | `2` | Janelas anômalas consecutivas antes de bloquear |
 | `SDN_DDOS_BLOCK_TIME` | `30` | Duração do bloqueio em segundos |
-| `SDN_DDOS_SUMMARY_EVERY_CYCLES` | `6` | Imprime resumo a cada N ciclos (0 desativa) |
 | `SDN_DDOS_LOG_LEVEL` | `INFO` | Nível de log |
 
-Os testes devem ser realizados somente no ambiente controlado do Mininet.
+Os testes devem ser realizados somente no ambiente controlado do Mininet. Para executar os testes unitários, instale `pytest` no ambiente virtual (`pip install pytest`) e execute `pytest -q tests`. Os testes cobrem a detecção individual por PPS/bytes/s, aumentos uniformes entre origens e detecção de entropia.

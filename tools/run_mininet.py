@@ -9,6 +9,8 @@ from __future__ import annotations
 import argparse
 import time
 
+from ping_scenario import PingScenario
+
 from mininet.cli import CLI
 from mininet.link import TCLink
 from mininet.log import setLogLevel, info
@@ -52,6 +54,7 @@ def main() -> int:
     parser.add_argument("--jitter", default=0, help="variação de atraso (padrão: 0us)")
     parser.add_argument("--queue", type=int, default=100, help="tamanho máximo da fila em pacotes")
     parser.add_argument("--loss", type=float, default=0, help="perda artificial em %% (padrão: 0)")
+    parser.add_argument("--auto-ping-test", action="store_true", help="executa tráfego normal seguido de sobrecarga por ping")
     args = parser.parse_args()
 
     if args.bw <= 0 or args.queue < 1:
@@ -80,6 +83,7 @@ def main() -> int:
         port=args.controller_port,
     )
 
+    scenario = None
     try:
         info("*** Iniciando rede Mininet com enlaces TC configurados\n")
         info(
@@ -89,11 +93,18 @@ def main() -> int:
         )
         net.start()
         time.sleep(1)
-        info("*** Envie pings manualmente no prompt mininet>, por exemplo: h1 ping -c 10 h4\n")
+        if args.auto_ping_test:
+            scenario = PingScenario()
+            scenario.start(net)
+            info("*** Cenário automático iniciado; acompanhe o terminal do controlador.\n")
+        else:
+            info("*** Envie pings manualmente no prompt mininet>, por exemplo: h1 ping -c 10 h4\n")
         CLI(net)
     except KeyboardInterrupt:
         pass
     finally:
+        if scenario is not None:
+            scenario.stop()
         net.stop()
     return 0
 

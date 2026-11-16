@@ -1,7 +1,7 @@
 """Detecção com uma baseline global inicializada pelo primeiro par observado."""
 import statistics
 from collections import defaultdict, deque
-from typing import Deque, DefaultDict, Optional, Tuple
+from typing import Deque, DefaultDict, Dict, Optional, Tuple
 from .config import DetectorConfig
 from .models import Detection, DetectionStatus
 
@@ -34,18 +34,19 @@ class AnomalyDetector:
 
     def evaluate(
         self, pair_id: str, rate: float, minimum_rate: Optional[float] = None,
-        include_zero_rates: bool = False,
+        include_zero_rates: bool = False, update_baseline: bool = True,
     ) -> Detection:
         """Avalia uma métrica; somente o primeiro par forma a baseline inicial global."""
         # Não fixe a baseline em um par cuja primeira taxa seja zero:
         # isso pode impedir que a métrica forme sua baseline (especialmente bytes/s).
-        if self._baseline_pair is None and (rate > 0 or include_zero_rates):
+        if update_baseline and self._baseline_pair is None and (rate > 0 or include_zero_rates):
             self._baseline_pair = pair_id
         if not self.baseline_ready:
             if (
                 self._baseline_pair is not None
                 and pair_id == self._baseline_pair
                 and (rate > 0 or include_zero_rates)
+                and update_baseline
             ):
                 self._history.append(rate)
             return Detection(DetectionStatus.BASELINE, rate, baseline_size=len(self._history))
@@ -53,7 +54,7 @@ class AnomalyDetector:
         mean, std, limit = self.global_limits(minimum_rate)
         if rate <= 0:
             self._streaks[pair_id] = 0
-            if include_zero_rates:
+            if include_zero_rates and update_baseline:
                 self._history.append(0.0)
             return Detection(DetectionStatus.NORMAL, rate, len(self._history),
                              mean=mean, std=std, limit=limit)
@@ -64,5 +65,217 @@ class AnomalyDetector:
             return Detection(DetectionStatus.ANOMALY, rate, len(self._history), mean=mean, std=std,
                              limit=limit, consecutive_anomalies=streak, should_block=should_block)
         self._streaks[pair_id] = 0
-        self._history.append(rate)
+        if update_baseline:
+            self._history.append(rate)
         return Detection(DetectionStatus.NORMAL, rate, len(self._history), mean=mean, std=std, limit=limit)
+
+class DestinationPpsDetector:
+    """Detector 3-sigma independente para o tráfego agregado de cada destino.
+
+    A baseline recebe uma amostra por janela de monitoramento. Amostras
+    anômalas nunca entram no histórico; amostras normais atualizam a janela.
+    """
+
+    def __init__(self, config: DetectorConfig) -> None:
+        self._config = config
+        self._history: Deque[float] = deque(maxlen=config.history_size)
+        self._streak = 0
+
+    @property
+    def baseline_ready(self) -> bool:
+        return len(self._history) >= self._config.baseline_samples
+
+    def evaluate(
+        self, rate: float, minimum_rate: Optional[float] = None,
+        update_baseline: bool = True,
+    ) -> Detection:
+        """Avalia uma taxa agregada recebida por um destino em uma janela.
+
+        minimum_rate permite usar o mesmo cálculo para bytes/s sem aplicar
+        o piso absoluto configurado em PPS.
+        """
+        rate = max(0.0, float(rate))
+        floor = self._config.minimum_pps if minimum_rate is None else minimum_rate
+
+        if not self.baseline_ready:
+            if update_baseline:
+                self._history.append(rate)
+            return Detection(
+                DetectionStatus.BASELINE, rate, len(self._history)
+            )
+
+        mean = statistics.fmean(self._history)
+        std = statistics.stdev(self._history)
+        # O piso evita limite zero quando o servidor tem tráfego muito baixo
+        # ou baseline constante. Para valores normais, aplica-se média + 3σ.
+        limit = max(
+            mean + self._config.threshold_factor * std,
+            mean * self._config.min_rate_factor,
+            floor,
+        )
+
+        if rate > limit:
+            self._streak += 1
+            should_block = self._streak >= self._config.required_anomalies
+            streak = self._streak
+            if should_block:
+                self._streak = 0
+            return Detection(
+                DetectionStatus.ANOMALY,
+                rate,
+                len(self._history),
+                mean=mean,
+                std=std,
+                limit=limit,
+                consecutive_anomalies=streak,
+                should_block=should_block,
+            )
+
+        self._streak = 0
+        if update_baseline:
+            self._history.append(rate)
+        return Detection(
+            DetectionStatus.NORMAL,
+            rate,
+            len(self._history),
+            mean=mean,
+            std=std,
+            limit=limit,
+        )
+
+
+class DestinationConnectionDetector:
+    """Detecta DoS usando os limites estatísticos globais de cada destino."""
+
+    def __init__(self, config: DetectorConfig) -> None:
+        self._config = config
+        self._last_seen: Dict[str, int] = {}
+        self._streaks: Dict[Tuple[str, str], int] = defaultdict(int)
+
+    def evaluate(self, rates: Dict[str, object], cycle: int) -> Dict[str, Dict[str, Detection]]:
+        """Compara origens com limites do destino, removendo outliers das referências."""
+        expired = [src for src, seen in self._last_seen.items() if cycle - seen >= 2]
+        for src in expired:
+            self._last_seen.pop(src, None)
+            self._streaks.pop((src, "PPS"), None)
+            self._streaks.pop((src, "BYTES/S"), None)
+
+        if not rates:
+            return {}
+
+        results: Dict[str, Dict[str, Detection]] = {}
+        metrics = (
+            ("PPS", lambda rate: float(rate.pps), self._config.minimum_pps),
+            ("BYTES/S", lambda rate: float(rate.bps), 0.0),
+        )
+
+        # PPS usa média + 1 desvio; bytes/s mantém o fator configurado.
+        # A exclusão é conjunta: se uma origem for anômala em qualquer métrica,
+        # ela deixa de compor a referência das duas métricas.
+        values_by_metric = {
+            metric: {src: getter(rate) for src, rate in rates.items()}
+            for metric, getter, _floor in metrics
+        }
+        factors = {
+            "PPS": 1.0,
+            "BYTES/S": self._config.threshold_factor,
+        }
+        anomalous_sources = set()
+        limits = {}
+
+        # Itera até estabilizar: remove outliers, recalcula média/desvio e
+        # verifica novamente. Assim, vários atacantes não elevam juntos a média.
+        while True:
+            limits = {}
+            newly_anomalous = set()
+            for metric, _getter, floor in metrics:
+                values = values_by_metric[metric]
+                reference = {
+                    src: value for src, value in values.items()
+                    if src not in anomalous_sources
+                }
+                if not reference:
+                    reference = values
+
+                reference_values = list(reference.values())
+                mean = statistics.fmean(reference_values)
+                std = (
+                    statistics.stdev(reference_values)
+                    if len(reference_values) > 1 else 0.0
+                )
+                limit = max(
+                    mean + factors[metric] * std,
+                    mean * self._config.min_rate_factor,
+                    floor,
+                )
+                limits[metric] = (mean, std, limit, _getter)
+                newly_anomalous.update(
+                    src for src, value in values.items()
+                    if value > limit and src not in anomalous_sources
+                )
+
+            if not newly_anomalous:
+                break
+            anomalous_sources.update(newly_anomalous)
+
+        # Limites finais calculados sem nenhuma origem já classificada
+        # como anômala. Se todas forem anômalas, mantém a referência anterior.
+        for metric, _getter, floor in metrics:
+            values = values_by_metric[metric]
+            reference = {
+                src: value for src, value in values.items()
+                if src not in anomalous_sources
+            }
+            if reference:
+                reference_values = list(reference.values())
+                mean = statistics.fmean(reference_values)
+                std = (
+                    statistics.stdev(reference_values)
+                    if len(reference_values) > 1 else 0.0
+                )
+                limit = max(
+                    mean + factors[metric] * std,
+                    mean * self._config.min_rate_factor,
+                    floor,
+                )
+                limits[metric] = (mean, std, limit, _getter)
+            else:
+                reference_values = list(values.values())
+                mean = statistics.fmean(reference_values)
+                std = statistics.stdev(reference_values) if len(reference_values) > 1 else 0.0
+                limit = max(
+                    mean + factors[metric] * std,
+                    mean * self._config.min_rate_factor,
+                    floor,
+                )
+                limits[metric] = (mean, std, limit, _getter)
+
+        for src, rate in rates.items():
+            results[src] = {}
+            for metric, _getter, _floor in metrics:
+                if metric not in limits:
+                    continue
+                mean, std, limit, getter = limits[metric]
+                value = getter(rate)
+                key = (src, metric)
+                if value > limit:
+                    streak = self._streaks[key] + 1
+                    should_block = streak >= self._config.required_anomalies
+                    self._streaks[key] = 0 if should_block else streak
+                    results[src][metric] = Detection(
+                        DetectionStatus.ANOMALY, value, len(rates),
+                        mean=mean, std=std, limit=limit,
+                        consecutive_anomalies=streak, should_block=should_block,
+                    )
+                else:
+                    self._streaks[key] = 0
+                    results[src][metric] = Detection(
+                        DetectionStatus.NORMAL, value, len(rates),
+                        mean=mean, std=std, limit=limit,
+                    )
+            self._last_seen[src] = cycle
+        return results
+
+    def reset(self) -> None:
+        self._last_seen.clear()
+        self._streaks.clear()

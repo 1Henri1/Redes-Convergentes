@@ -83,3 +83,30 @@ def test_first_ip_alone_initializes_baseline():
 
     result = detector.evaluate(IP2, 500.0)
     assert result.status is DetectionStatus.ANOMALY
+
+
+
+def test_suspicious_samples_do_not_initialize_baseline():
+    detector = AnomalyDetector(DetectorConfig(baseline_samples=3))
+
+    result = detector.evaluate(IP2, 500.0, update_baseline=False)
+
+    assert result.status is DetectionStatus.BASELINE
+    assert result.baseline_size == 0
+    assert detector.baseline_pair is None
+
+    for _ in range(3):
+        detector.evaluate(IP1, 10.0)
+
+    assert detector.baseline_ready
+    assert detector.global_limits(minimum_rate=0.0)[0] == pytest.approx(10.0)
+
+
+def test_suspicious_normal_sample_does_not_change_global_mean(detector):
+    train(detector)
+
+    result = detector.evaluate(IP2, 20.0, update_baseline=False)
+
+    assert result.status is DetectionStatus.NORMAL
+    assert result.mean == pytest.approx(10.0)
+    assert detector.global_limits(minimum_rate=0.0)[0] == pytest.approx(10.0)

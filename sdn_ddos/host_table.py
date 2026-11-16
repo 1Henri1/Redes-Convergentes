@@ -48,6 +48,10 @@ class HostTable:
         """Retorna as portas nas quais um IP já foi aprendido."""
         return list(self._port_to_ip.get(dpid, {}))
 
+    def ips_for_switch(self, dpid: int) -> list[str]:
+        """Retorna os IPs aprendidos nas portas de um switch."""
+        return list(self._port_to_ip.get(dpid, {}).values())
+
     def forget_switch(self, dpid: int) -> None:
         """Descarta tudo o que foi aprendido sobre um switch desconectado."""
         self._mac_to_port.pop(dpid, None)
