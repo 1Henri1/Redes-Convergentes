@@ -418,34 +418,8 @@ class SdnDdosController(app_manager.OSKenApp):
                     total_pps, total_bps, entropy_result.entropy_bits,
                 )
             else:
-                # Um sinal suspeito congela o conjunto inteiro de métricas do
-                # destino. Sem histórico anterior, usa somente origens limpas.
-                snapshot = self._destination_metric_snapshots.get(dst)
-                if suspicious_sources and snapshot is not None:
-                    (
-                        pps_mean, pps_std, pps_limit,
-                        bytes_mean, bytes_std, bytes_limit,
-                    ) = snapshot
-                else:
-                    clean_sources = [
-                        src for src in destination_rates
-                        if src not in suspicious_sources
-                    ]
-                    pps_values = [float(destination_rates[src].pps) for src in clean_sources]
-                    bytes_values = [float(destination_rates[src].bps) for src in clean_sources]
-                    pps_mean = statistics.fmean(pps_values) if pps_values else 0.0
-                    bytes_mean = statistics.fmean(bytes_values) if bytes_values else 0.0
-                    pps_std = statistics.stdev(pps_values) if len(pps_values) > 1 else 0.0
-                    bytes_std = statistics.stdev(bytes_values) if len(bytes_values) > 1 else 0.0
-                    if not suspicious_sources:
-                        self._destination_metric_snapshots[dst] = (
-                            pps_mean, pps_std, pps_limit,
-                            bytes_mean, bytes_std, bytes_limit,
-                        )
-
-                # Sempre exibe os limites realmente calculados pelo detector
-                # neste ciclo, nunca os limites antigos do snapshot.
-                # N/A significa que a análise transversal foi suspensa.
+                # Limites efetivamente calculados neste ciclo. N/A significa
+                # que a análise transversal foi suspensa ou não há origem ativa.
                 pps_limit = next(
                     (metrics["PPS"].limit for metrics in connection_results.values()
                      if metrics.get("PPS") is not None),
@@ -456,6 +430,34 @@ class SdnDdosController(app_manager.OSKenApp):
                      if metrics.get("BYTES/S") is not None),
                     None,
                 )
+
+                # Um sinal suspeito congela o conjunto inteiro de métricas do
+                # destino. Sem histórico anterior, usa somente origens limpas.
+                snapshot = self._destination_metric_snapshots.get(dst)
+                clean_sources = [
+                    src for src in destination_rates
+                    if src not in suspicious_sources
+                ]
+                if suspicious_sources and snapshot is not None:
+                    pps_mean, pps_std, _, bytes_mean, bytes_std, _ = snapshot
+                elif clean_sources:
+                    pps_values = [float(destination_rates[src].pps) for src in clean_sources]
+                    bytes_values = [float(destination_rates[src].bps) for src in clean_sources]
+                    pps_mean = statistics.fmean(pps_values)
+                    bytes_mean = statistics.fmean(bytes_values)
+                    pps_std = statistics.stdev(pps_values) if len(pps_values) > 1 else 0.0
+                    bytes_std = statistics.stdev(bytes_values) if len(bytes_values) > 1 else 0.0
+                    if not suspicious_sources:
+                        self._destination_metric_snapshots[dst] = (
+                            pps_mean, pps_std, pps_limit,
+                            bytes_mean, bytes_std, bytes_limit,
+                        )
+                elif snapshot is not None:
+                    # Ex.: última origem foi bloqueada. Preserva as últimas
+                    # estatísticas válidas até o destino expirar (2 ciclos).
+                    pps_mean, pps_std, _, bytes_mean, bytes_std, _ = snapshot
+                else:
+                    pps_mean = pps_std = bytes_mean = bytes_std = 0.0
                 self._reporter.destination_result(
                     dst, total_pps, total_bps, len(destination_rates),
                     pps_mean, pps_std, bytes_mean, bytes_std,
