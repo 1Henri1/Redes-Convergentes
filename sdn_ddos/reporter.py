@@ -137,7 +137,7 @@ class ConsoleReporter:
         self._queue(
             logging.INFO,
             "[DESTINO] %-15s | PPS total: %8.2f (média %.2f | desvio %.2f | limite %s) | "
-            "bytes/s total: %10.2f (média %.2f | desvio %.2f | limite %s) | 
+            "bytes/s total: %10.2f (média %.2f | desvio %.2f | limite %s) | "
             "origens: %2d | H: %.3f bits (norm. %.3f) | %s",
             dst, total_pps, pps_mean, pps_std,
             "N/A" if pps_limit is None else "%.2f" % pps_limit,
