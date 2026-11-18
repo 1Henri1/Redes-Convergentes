@@ -362,6 +362,7 @@ class SdnDdosController(app_manager.OSKenApp):
                     continue
                 pair_result = self._process_pair_rate(
                     datapath, src, dst, rate, icmp_interval.get((src, dst)),
+                    pps_detection=connection_results.get(src, {}).get("PPS"),
                     update_baseline=not entropy_result.anomalous and src not in suspicious_sources,
                 )
                 pair_bps_results[(src, dst)] = pair_result
@@ -417,42 +418,46 @@ class SdnDdosController(app_manager.OSKenApp):
                     total_pps, total_bps, entropy_result.entropy_bits,
                 )
             else:
+                # Limites efetivamente calculados neste ciclo. N/A significa
+                # que a análise transversal foi suspensa ou não há origem ativa.
+                pps_limit = next(
+                    (metrics["PPS"].limit for metrics in connection_results.values()
+                     if metrics.get("PPS") is not None),
+                    None,
+                )
+                bytes_limit = next(
+                    (metrics["BYTES/S"].limit for metrics in connection_results.values()
+                     if metrics.get("BYTES/S") is not None),
+                    None,
+                )
+
                 # Um sinal suspeito congela o conjunto inteiro de métricas do
                 # destino. Sem histórico anterior, usa somente origens limpas.
                 snapshot = self._destination_metric_snapshots.get(dst)
+                clean_sources = [
+                    src for src in destination_rates
+                    if src not in suspicious_sources
+                ]
                 if suspicious_sources and snapshot is not None:
-                    (
-                        pps_mean, pps_std, pps_limit,
-                        bytes_mean, bytes_std, bytes_limit,
-                    ) = snapshot
-                else:
-                    clean_sources = [
-                        src for src in destination_rates
-                        if src not in suspicious_sources
-                    ]
+                    pps_mean, pps_std, _, bytes_mean, bytes_std, _ = snapshot
+                elif clean_sources:
                     pps_values = [float(destination_rates[src].pps) for src in clean_sources]
                     bytes_values = [float(destination_rates[src].bps) for src in clean_sources]
-                    pps_mean = statistics.fmean(pps_values) if pps_values else 0.0
-                    bytes_mean = statistics.fmean(bytes_values) if bytes_values else 0.0
+                    pps_mean = statistics.fmean(pps_values)
+                    bytes_mean = statistics.fmean(bytes_values)
                     pps_std = statistics.stdev(pps_values) if len(pps_values) > 1 else 0.0
                     bytes_std = statistics.stdev(bytes_values) if len(bytes_values) > 1 else 0.0
-                    pps_limit = next(
-                        (result.limit for result in (
-                            metrics["PPS"] for metrics in connection_results.values()
-                        ) if result.limit is not None),
-                        0.0,
-                    )
-                    bytes_limit = next(
-                        (result.limit for result in (
-                            metrics["BYTES/S"] for metrics in connection_results.values()
-                        ) if result.limit is not None),
-                        0.0,
-                    )
                     if not suspicious_sources:
                         self._destination_metric_snapshots[dst] = (
                             pps_mean, pps_std, pps_limit,
                             bytes_mean, bytes_std, bytes_limit,
                         )
+                elif snapshot is not None:
+                    # Ex.: última origem foi bloqueada. Preserva as últimas
+                    # estatísticas válidas até o destino expirar (2 ciclos).
+                    pps_mean, pps_std, _, bytes_mean, bytes_std, _ = snapshot
+                else:
+                    pps_mean = pps_std = bytes_mean = bytes_std = 0.0
                 self._reporter.destination_result(
                     dst, total_pps, total_bps, len(destination_rates),
                     pps_mean, pps_std, bytes_mean, bytes_std,
@@ -579,6 +584,7 @@ class SdnDdosController(app_manager.OSKenApp):
     def _process_pair_rate(
         self, datapath: Any, src: str, dst: str, rate: Any,
         icmp_stats: Dict[str, float] | None = None,
+        pps_detection: Detection | None = None,
         update_baseline: bool = True,
     ) -> Detection:
         """Exibe e retorna a detecção de bytes/s; pode congelar a baseline."""
@@ -589,7 +595,7 @@ class SdnDdosController(app_manager.OSKenApp):
         )
         self._reporter.pair_result(
             src, dst, rate, bps_detection,
-            self._config.required_anomalies, icmp_stats,
+            self._config.required_anomalies, icmp_stats, pps_detection,
         )
         if bps_detection.status is DetectionStatus.ANOMALY:
             self._stats.detections += 1

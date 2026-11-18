@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Edite o método main() para montar sequências personalizadas de pings."""
 from __future__ import annotations
 
+import random as rd
 import subprocess
 import threading
 from typing import Sequence
@@ -115,47 +115,81 @@ class PingScenario:
         for processes in groups:
             self._terminate(processes)
 
+    def Normal(self, Group: int, cont: int)-> int:
+        for i in range(Group*5+1,Group*5+6):
+            src = f"h{i}"
+            num = rd.randint(1, 5)
+            if num<5:
+                self.start_pings(
+                    group=f"N{i}{cont}",
+                    sources=[src],
+                    destination="h25",
+                    interval=0.01+0.001*num,
+                    count=int(5000/(num+2)),
+                    packet_size=int(200+20*(num)/(Group+2)),
+                )
+                self.wait(num)
+        if Group == 1:
+            return 0
+        else:
+            return 1
+
+    def AtaqDos(self, cont: int)-> None:
+            for i in range(11,13):
+                src = f"h{i}"
+                num = rd.randint(1, 5)
+                num2 = rd.randint(1,10)
+                if num<5:
+                    self.start_pings(
+                        group=f"D{i}{cont}",
+                        sources=[src],
+                        destination="h25",
+                        interval=0.005+0.005*(num2/num**2),
+                        count=int(5000/num**2*num2),
+                        packet_size=int(200*(num**2/num2)),
+                    )
+                    self.wait(num)
+
+    def AtaqDDos(self, cont: int)-> None:
+            for i in range(13,25):
+                src = f"h{i}"
+                num = rd.randint(1, 5)
+                num2 = rd.randint(5,10)
+                if num<5:
+                    self.start_pings(
+                        group=f"DD{i}{cont}",
+                        sources=[src],
+                        destination="h25",
+                        interval=0.01+0.005*(num2/num),
+                        count=int(5000/num**2*num2),
+                        packet_size=int(150+20*(num**2/num2)),
+                    )
+                    self.wait(num)
+
     def main(self) -> None:
-        """Sequência do teste: edite este método para criar seus experimentos.
-
-        Para adicionar etapas, chame start_pings() novamente.
-        Use wait(segundos) para inserir pausas entre etapas.
-        Grupos já iniciados continuam ativos até stop_pings() ou stop_all().
-        """
-        # BLOCO 1: tráfego normal. h1 e h2 permanecem ativos.
-        self.start_pings(
-            group="normal",
-            sources=["h1", "h2"],
-            destination="h10",
-            interval=1.0,
-            count=100,
-            packet_size=56,
-        )
-        self.wait(35)
-
-        # BLOCO 2: novas origens começam a enviar para o mesmo servidor.
-        self.start_pings(
-            group="sobrecarga",
-            sources=["h3", "h4", "h5", "h6"],
-            destination="h10",
-            interval=0.1,
-            count=500,
-            packet_size=56,
-        )
-        self.wait(30)
-
-        # Exemplo de pausa entre etapas:
-        # self.wait(5)
-        #
-        # Exemplo de um terceiro bloco, mantendo os grupos anteriores ativos:
-        # self.start_pings(
-        #     "bloco_3", ["h7", "h8"], "h10",
-        #     interval=0.05, count=1000, packet_size=128,
-        # )
-        # self.wait(20)
-
-        # Encerra todos os pings ao final da sequência.
-        self.stop_all()
+        cont = 0
+        grupo = self.Normal(0,cont)
+        self.wait(15)
+        cont+=1
+        grupo = self.Normal(grupo,cont)
+        self.wait(15)
+        cont+=1
+        while True:
+            num = rd.randint(0, 10)
+            if num<5:
+                grupo = self.Normal(grupo,cont)
+                self.wait(25)
+            elif num<10:
+                self.AtaqDDos(cont)
+                self.wait(10)
+                cont+=1
+            elif num==8:
+                self.AtaqDos(cont)
+                self.wait(10)
+            else:
+                self.AtaqDDos(cont)
+                self.wait(10)
+            cont+=1
 
     def start(self, net) -> None:
         """Executa main() em segundo plano para manter a CLI do Mininet disponível."""

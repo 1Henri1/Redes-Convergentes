@@ -177,7 +177,7 @@ class DestinationConnectionDetector:
             for metric, getter, _floor in metrics
         }
         factors = {
-            "PPS": 1.0,
+            "PPS": self._config.threshold_factor,
             "BYTES/S": self._config.threshold_factor,
         }
         anomalous_sources = set()

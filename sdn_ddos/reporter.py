@@ -60,6 +60,7 @@ class ConsoleReporter:
         self, src: str, dst: str, rate: PortRate,
         bps_detection: Detection, required: int,
         icmp_stats: Optional[dict] = None,
+        pps_detection: Optional[Detection] = None,
     ) -> None:
         """Registra as taxas individuais; a decisão principal de PPS é por destino."""
         def status(detection: Detection) -> str:
@@ -86,11 +87,18 @@ class ConsoleReporter:
                     icmp_stats["lost"], rtt_info,
                 )
             )
-        self._queue(logging.INFO, 
-            "[PAR] Origem: %-15s | Destino: %-15s | PPS: %7.2f | "
+        pps_status = status(pps_detection) if pps_detection is not None else "N/A"
+        bps_status = status(bps_detection)
+        anomalous = (
+            (pps_detection is not None and pps_detection.status is DetectionStatus.ANOMALY)
+            or bps_detection.status is DetectionStatus.ANOMALY
+        )
+        self._queue(
+            logging.WARNING if anomalous else logging.INFO,
+            "[PAR] Origem: %-15s | Destino: %-15s | PPS: %7.2f (%s) | "
             "bytes/s: %10.2f (%s) | Pkts: %-5s%s",
-            src, dst, rate.pps, rate.bps,
-            status(bps_detection), rate.delta_packets, ping_info,
+            src, dst, rate.pps, pps_status, rate.bps,
+            bps_status, rate.delta_packets, ping_info,
         )
 
     def destination_baseline(
@@ -128,11 +136,13 @@ class ConsoleReporter:
 
         self._queue(
             logging.INFO,
-            "[DESTINO] %-15s | PPS total: %8.2f (média %.2f | desvio %.2f | limite %.2f) | "
-            "bytes/s total: %10.2f (média %.2f | desvio %.2f | limite %.2f) | "
+            "[DESTINO] %-15s | PPS total: %8.2f (média %.2f | desvio %.2f | limite %s) | "
+            "bytes/s total: %10.2f (média %.2f | desvio %.2f | limite %s) | "
             "origens: %2d | H: %.3f bits (norm. %.3f) | %s",
-            dst, total_pps, pps_mean, pps_std, pps_limit,
-            total_bps, bytes_mean, bytes_std, bytes_limit,
+            dst, total_pps, pps_mean, pps_std,
+            "N/A" if pps_limit is None else "%.2f" % pps_limit,
+            total_bps, bytes_mean, bytes_std,
+            "N/A" if bytes_limit is None else "%.2f" % bytes_limit,
             source_count, entropy.entropy_bits, entropy.normalized_entropy, entropy_detail,
         )
 

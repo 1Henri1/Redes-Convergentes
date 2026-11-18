@@ -18,7 +18,7 @@ _MAX_OPENFLOW_TIMEOUT = 65535
 class DetectorConfig:
     """Parâmetros de monitoramento, detecção e mitigação."""
 
-    monitor_interval: float = 5.0
+    monitor_interval: float = 4.0
     report_interval: float = 10.0
     baseline_samples: int = 5
     history_size: int = 20
