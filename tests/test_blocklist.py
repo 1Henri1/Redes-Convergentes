@@ -37,3 +37,28 @@ def test_pop_expired_returns_and_removes_only_expired():
     assert blocklist.pop_expired() == ["10.0.0.1"]
     assert blocklist.is_blocked("10.0.0.2")
     assert blocklist.pop_expired() == []
+
+
+
+def test_repeated_blocks_double_duration_per_ip():
+    clock = FakeClock()
+    blocklist = BlockList(30, clock)
+
+    assert blocklist.block("10.0.0.1") == 30
+    clock.now += 30
+    assert blocklist.pop_expired() == ["10.0.0.1"]
+
+    assert blocklist.block("10.0.0.1") == 60
+    clock.now += 60
+    assert blocklist.pop_expired() == ["10.0.0.1"]
+
+    assert blocklist.block("10.0.0.1") == 120
+    assert blocklist.block("10.0.0.2") == 30
+
+
+def test_repeated_block_duration_is_capped_at_openflow_limit():
+    blocklist = BlockList(30000, FakeClock())
+    assert blocklist.block("10.0.0.1") == 30000
+    assert blocklist.block("10.0.0.1") == 60000
+    assert blocklist.block("10.0.0.1") == 65535
+    assert blocklist.block("10.0.0.1") == 65535
