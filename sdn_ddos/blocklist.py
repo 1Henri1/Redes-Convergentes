@@ -4,23 +4,26 @@ import time
 from typing import Callable, Dict, List
 
 
-class BlockList:
-    """Registra no controlador quais IPs estão bloqueados e até quando.
+_MAX_OPENFLOW_TIMEOUT = 65535
 
-    O bloqueio efetivo é uma regra de drop no switch com ``hard_timeout``;
-    esta lista é o espelho dessa regra no controlador, usada para suprimir
-    novas detecções e para informar quando o bloqueio expirou.
-    """
+
+class BlockList:
+    """Registra bloqueios e dobra sua duração a cada reincidência do IP."""
 
     def __init__(self, duration: float, clock: Callable[[], float] = time.monotonic) -> None:
         self._duration = duration
         self._clock = clock
         self._expires_at: Dict[str, float] = {}
+        self._block_counts: Dict[str, int] = {}
 
-    def block(self, ip: str) -> float:
-        expiry = self._clock() + self._duration
-        self._expires_at[ip] = expiry
-        return expiry
+    def block(self, ip: str) -> int:
+        """Bloqueia o IP e retorna a duração efetiva, dobrada por reincidência."""
+        count = self._block_counts.get(ip, 0)
+        multiplier = 2 ** min(count, 16)
+        duration = min(int(self._duration * multiplier), _MAX_OPENFLOW_TIMEOUT)
+        self._block_counts[ip] = count + 1
+        self._expires_at[ip] = self._clock() + duration
+        return duration
 
     def is_blocked(self, ip: str) -> bool:
         expiry = self._expires_at.get(ip)
