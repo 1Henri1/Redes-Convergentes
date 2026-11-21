@@ -28,7 +28,7 @@ from os_ken.ofproto import ofproto_v1_3
 
 from .blocklist import BlockList
 from .config import DetectorConfig
-from .detector import AnomalyDetector, DestinationConnectionDetector, DestinationPpsDetector
+from .detector import DestinationConnectionDetector, DestinationPpsDetector
 from .entropy import DestinationEntropyDetector
 from .flow_manager import FlowManager
 from .host_table import HostTable
@@ -51,7 +51,6 @@ class SdnDdosController(app_manager.OSKenApp):
         self._config = DetectorConfig.from_env()
         self._hosts = HostTable()
         self._rates = PortRateCalculator()
-        self._bps_detector = AnomalyDetector(self._config)
         # Cada servidor mantém sua própria baseline de PPS agregado recebido.
         self._destination_detectors: Dict[str, DestinationPpsDetector] = {}
         # Baseline agregada de bytes/s por destino; apenas informativa, não bloqueia.
@@ -348,8 +347,9 @@ class SdnDdosController(app_manager.OSKenApp):
             else:
                 connection_results = connection_detector.evaluate(destination_rates, cycle)
 
-            # Avalia bytes/s somente depois da entropia. Se o destino estiver
-            # suspeito de DDoS, nenhuma amostra dele atualiza a baseline global.
+            # PPS e bytes/s usam exclusivamente os mesmos limites compartilhados
+            # calculados para o destino. Não existe um segundo detector de bytes/s
+            # com baseline independente, pois ele poderia gerar bloqueios divergentes.
             pair_bps_results = {}
             suspicious_sources = {
                 src for src, metrics in connection_results.items()
@@ -360,24 +360,18 @@ class SdnDdosController(app_manager.OSKenApp):
                 datapath = self._datapath_for_ip(src)
                 if datapath is None:
                     continue
-                pair_result = self._process_pair_rate(
-                    datapath, src, dst, rate, icmp_interval.get((src, dst)),
-                    pps_detection=connection_results.get(src, {}).get("PPS"),
-                    update_baseline=not entropy_result.anomalous and src not in suspicious_sources,
-                )
-                pair_bps_results[(src, dst)] = pair_result
-                if pair_result.status is DetectionStatus.ANOMALY:
-                    suspicious_sources.add(src)
-
-            for src in destination_rates:
                 metrics = connection_results.get(src, {})
                 pps_result = metrics.get("PPS")
                 bytes_result = metrics.get("BYTES/S")
-                pair_bytes_result = pair_bps_results.get((src, dst))
+                pair_result = self._process_pair_rate(
+                    datapath, src, dst, rate, icmp_interval.get((src, dst)),
+                    bps_detection=bytes_result,
+                    pps_detection=pps_result,
+                )
+                pair_bps_results[(src, dst)] = pair_result
                 if (
                     (pps_result is not None and pps_result.should_block)
                     or (bytes_result is not None and bytes_result.should_block)
-                    or (pair_bytes_result is not None and pair_bytes_result.should_block)
                 ):
                     dos_sources.add(src)
 
@@ -584,15 +578,15 @@ class SdnDdosController(app_manager.OSKenApp):
     def _process_pair_rate(
         self, datapath: Any, src: str, dst: str, rate: Any,
         icmp_stats: Dict[str, float] | None = None,
+        bps_detection: Detection | None = None,
         pps_detection: Detection | None = None,
-        update_baseline: bool = True,
     ) -> Detection:
-        """Exibe e retorna a detecção de bytes/s; pode congelar a baseline."""
+        """Exibe as detecções do par usando os limites compartilhados do destino."""
         pair_id = "{}->{}".format(src, dst)
-        bps_detection = self._bps_detector.evaluate(
-            pair_id, rate.bps, minimum_rate=0.0,
-            update_baseline=update_baseline,
-        )
+        # Durante a suspensão da análise transversal por entropia, não inventa
+        # um limite individual: registra a métrica como contextual, sem bloquear.
+        if bps_detection is None:
+            bps_detection = Detection(DetectionStatus.BASELINE, rate.bps, 0)
         self._reporter.pair_result(
             src, dst, rate, bps_detection,
             self._config.required_anomalies, icmp_stats, pps_detection,
@@ -602,11 +596,16 @@ class SdnDdosController(app_manager.OSKenApp):
             self._reporter.anomaly(
                 pair_id, bps_detection, self._config.required_anomalies, "bytes/s"
             )
+        if pps_detection is not None and pps_detection.status is DetectionStatus.ANOMALY:
+            self._stats.detections += 1
+            self._reporter.anomaly(
+                pair_id, pps_detection, self._config.required_anomalies, "PPS"
+            )
         return bps_detection
 
     def _block(self, datapath: Any, ip: str) -> None:
-        """Aplica o bloqueio no switch e o registra no controlador."""
-        self._flows.install_drop(datapath, ip, self._config.block_time)
-        self._blocklist.block(ip)
+        """Aplica bloqueio progressivo e registra sua duração efetiva."""
+        duration = self._blocklist.block(ip)
+        self._flows.install_drop(datapath, ip, duration)
         self._stats.blocks += 1
-        self._reporter.block_activated(ip, self._config.block_time)
+        self._reporter.block_activated(ip, duration)
