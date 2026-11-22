@@ -186,50 +186,34 @@ class DestinationConnectionDetector:
             for metric, getter, _floor in metrics
         }
 
-        # Em ciclos válidos, calcula os limites removendo outliers iterativamente.
-        # Em ciclos suspeitos, usa exatamente os últimos limites válidos.
+        # Em ciclos válidos, identifica outliers com mediana e MAD.
+        # Cada origem é comparada com uma referência robusta que não é
+        # deslocada por um único valor extremo (como ocorria com média + 3σ).
         if update_baseline or not self._last_limits:
-            factors = {
-                "PPS": self._config.threshold_factor,
-                "BYTES/S": self._config.threshold_factor,
-            }
             anomalous_sources = set()
             limits = {}
 
-            while True:
-                limits = {}
-                newly_anomalous = set()
-                for metric, getter, floor in metrics:
-                    values = values_by_metric[metric]
-                    reference = {
-                        src: value for src, value in values.items()
-                        if src not in anomalous_sources
-                    }
-                    if not reference:
-                        reference = values
+            for metric, getter, floor in metrics:
+                values = values_by_metric[metric]
+                sample = list(values.values())
 
-                    reference_values = list(reference.values())
-                    mean = statistics.fmean(reference_values)
-                    std = (
-                        statistics.stdev(reference_values)
-                        if len(reference_values) > 1 else 0.0
-                    )
-                    limit = max(
-                        mean + factors[metric] * std,
-                        mean * self._config.min_rate_factor,
+                if len(sample) >= 3:
+                    median = statistics.median(sample)
+                    deviations = [abs(value - median) for value in sample]
+                    mad = statistics.median(deviations)
+                    robust_std = 1.4826 * mad
+                    robust_limit = max(
+                        median + self._config.threshold_factor * robust_std,
+                        median * self._config.min_rate_factor,
                         floor,
                     )
-                    limits[metric] = (mean, std, limit, getter)
-                    newly_anomalous.update(
+                    anomalous_sources.update(
                         src for src, value in values.items()
-                        if value > limit and src not in anomalous_sources
+                        if value > robust_limit
                     )
 
-                if not newly_anomalous:
-                    break
-                anomalous_sources.update(newly_anomalous)
-
-            # Recalcula as estatísticas finais somente com origens não anômalas.
+            # Estatísticas tradicionais são calculadas somente após remover
+            # todas as origens sinalizadas em qualquer uma das duas métricas.
             for metric, getter, floor in metrics:
                 values = values_by_metric[metric]
                 reference = {
@@ -237,6 +221,8 @@ class DestinationConnectionDetector:
                     if src not in anomalous_sources
                 }
                 if not reference:
+                    # Se todas as origens forem discrepantes, não inventa
+                    # uma referência vazia: mantém a amostra disponível.
                     reference = values
 
                 reference_values = list(reference.values())
