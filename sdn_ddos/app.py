@@ -412,51 +412,27 @@ class SdnDdosController(app_manager.OSKenApp):
                     total_pps, total_bps, entropy_result.entropy_bits,
                 )
             else:
-                # Limites calculados ou reutilizados pelo detector. N/A só ocorre
-                # antes de existir qualquer conjunto válido de estatísticas.
-                pps_limit = next(
-                    (metrics["PPS"].limit for metrics in connection_results.values()
-                     if metrics.get("PPS") is not None),
+                # O relatório usa exatamente as referências presentes nas
+                # detecções, isto é, os limites do ciclo anterior aplicados
+                # neste ciclo. Não recalcula médias com o tráfego atual.
+                pps_reference = next(
+                    (metrics["PPS"] for metrics in connection_results.values()
+                     if metrics.get("PPS") is not None
+                     and metrics["PPS"].mean is not None),
                     None,
                 )
-                bytes_limit = next(
-                    (metrics["BYTES/S"].limit for metrics in connection_results.values()
-                     if metrics.get("BYTES/S") is not None),
+                bytes_reference = next(
+                    (metrics["BYTES/S"] for metrics in connection_results.values()
+                     if metrics.get("BYTES/S") is not None
+                     and metrics["BYTES/S"].mean is not None),
                     None,
                 )
-
-                # Um sinal suspeito congela o conjunto inteiro de métricas do
-                # destino. Sem histórico anterior, usa somente origens limpas.
-                snapshot = self._destination_metric_snapshots.get(dst)
-                clean_sources = [
-                    src for src in destination_rates
-                    if src not in suspicious_sources
-                ]
-                if suspicious_sources and snapshot is not None:
-                    # Reutiliza integralmente a última fotografia válida,
-                    # inclusive os limites, sem exibir N/A durante a suspeita.
-                    (
-                        pps_mean, pps_std, pps_limit,
-                        bytes_mean, bytes_std, bytes_limit,
-                    ) = snapshot
-                elif clean_sources:
-                    pps_values = [float(destination_rates[src].pps) for src in clean_sources]
-                    bytes_values = [float(destination_rates[src].bps) for src in clean_sources]
-                    pps_mean = statistics.fmean(pps_values)
-                    bytes_mean = statistics.fmean(bytes_values)
-                    pps_std = statistics.stdev(pps_values) if len(pps_values) > 1 else 0.0
-                    bytes_std = statistics.stdev(bytes_values) if len(bytes_values) > 1 else 0.0
-                    if not suspicious_sources:
-                        self._destination_metric_snapshots[dst] = (
-                            pps_mean, pps_std, pps_limit,
-                            bytes_mean, bytes_std, bytes_limit,
-                        )
-                elif snapshot is not None:
-                    # Ex.: última origem foi bloqueada. Preserva as últimas
-                    # estatísticas válidas até o destino expirar (2 ciclos).
-                    pps_mean, pps_std, _, bytes_mean, bytes_std, _ = snapshot
-                else:
-                    pps_mean = pps_std = bytes_mean = bytes_std = 0.0
+                pps_mean = pps_reference.mean if pps_reference else 0.0
+                pps_std = pps_reference.std if pps_reference else 0.0
+                pps_limit = pps_reference.limit if pps_reference else None
+                bytes_mean = bytes_reference.mean if bytes_reference else 0.0
+                bytes_std = bytes_reference.std if bytes_reference else 0.0
+                bytes_limit = bytes_reference.limit if bytes_reference else None
                 self._reporter.destination_result(
                     dst, total_pps, total_bps, len(destination_rates),
                     pps_mean, pps_std, bytes_mean, bytes_std,
