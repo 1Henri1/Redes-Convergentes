@@ -180,8 +180,14 @@ def test_two_simultaneous_dos_sources_are_excluded_from_both_means_and_blocked()
         "10.0.0.6": connection(24.78, 2428.73),
     }
 
-    first = detector.evaluate(rates, 1)
-    second = detector.evaluate(rates, 2)
+    normal = {
+        "10.0.0.1": connection(9.6, 941),
+        "10.0.0.2": connection(9.6, 941),
+        "10.0.0.3": connection(9.6, 941),
+    }
+    detector.evaluate(normal, 1)
+    first = detector.evaluate(rates, 2)
+    second = detector.evaluate(rates, 3)
 
     for attacker in ("10.0.0.5", "10.0.0.6"):
         assert first[attacker]["PPS"].status is DetectionStatus.ANOMALY
@@ -217,8 +223,11 @@ def test_uniform_increase_is_not_individual_dos():
     increased = {src: connection(20, 200) for src in normal}
     result = detector.evaluate(increased, 2)
 
-    assert all(item["PPS"].status is DetectionStatus.NORMAL for item in result.values())
-    assert all(item["BYTES/S"].status is DetectionStatus.NORMAL for item in result.values())
+    # A elevação simultânea é coletiva: não deve bloquear cada origem como DoS.
+    assert all(item["PPS"].status is DetectionStatus.ANOMALY for item in result.values())
+    assert all(item["BYTES/S"].status is DetectionStatus.ANOMALY for item in result.values())
+    assert all(not item["PPS"].should_block for item in result.values())
+    assert all(not item["BYTES/S"].should_block for item in result.values())
 
 
 def test_outlier_streak_resets_when_origin_returns_to_normal():
@@ -294,7 +303,11 @@ def test_single_extreme_origin_is_excluded_before_destination_mean_and_std():
         "10.0.0.11": connection(41.87, 31363.20),
     }
 
-    result = detector.evaluate(rates, 1)
+    clean_baseline = {
+        src: rate for src, rate in rates.items() if src != "10.0.0.11"
+    }
+    detector.evaluate(clean_baseline, 1)
+    result = detector.evaluate(rates, 2)
 
     attacker = result["10.0.0.11"]
     assert attacker["PPS"].status is DetectionStatus.ANOMALY
