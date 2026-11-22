@@ -339,13 +339,13 @@ class SdnDdosController(app_manager.OSKenApp):
             connection_detector = self._destination_connection_detectors.setdefault(
                 dst, DestinationConnectionDetector(self._config)
             )
-            if entropy_result.anomalous:
-                # Suspende a análise transversal durante o padrão distribuído
-                # e zera sequências antigas para não misturar ciclos separados.
-                connection_detector.reset()
-                connection_results = {}
-            else:
-                connection_results = connection_detector.evaluate(destination_rates, cycle)
+            # Durante uma suspeita distribuída, continua comparando cada origem
+            # com os últimos limites estatísticos válidos, sem recalculá-los.
+            connection_results = connection_detector.evaluate(
+                destination_rates,
+                cycle,
+                update_baseline=not entropy_result.anomalous,
+            )
 
             # PPS e bytes/s usam exclusivamente os mesmos limites compartilhados
             # calculados para o destino. Não existe um segundo detector de bytes/s
@@ -412,8 +412,8 @@ class SdnDdosController(app_manager.OSKenApp):
                     total_pps, total_bps, entropy_result.entropy_bits,
                 )
             else:
-                # Limites efetivamente calculados neste ciclo. N/A significa
-                # que a análise transversal foi suspensa ou não há origem ativa.
+                # Limites calculados ou reutilizados pelo detector. N/A só ocorre
+                # antes de existir qualquer conjunto válido de estatísticas.
                 pps_limit = next(
                     (metrics["PPS"].limit for metrics in connection_results.values()
                      if metrics.get("PPS") is not None),
@@ -433,7 +433,12 @@ class SdnDdosController(app_manager.OSKenApp):
                     if src not in suspicious_sources
                 ]
                 if suspicious_sources and snapshot is not None:
-                    pps_mean, pps_std, _, bytes_mean, bytes_std, _ = snapshot
+                    # Reutiliza integralmente a última fotografia válida,
+                    # inclusive os limites, sem exibir N/A durante a suspeita.
+                    (
+                        pps_mean, pps_std, pps_limit,
+                        bytes_mean, bytes_std, bytes_limit,
+                    ) = snapshot
                 elif clean_sources:
                     pps_values = [float(destination_rates[src].pps) for src in clean_sources]
                     bytes_values = [float(destination_rates[src].bps) for src in clean_sources]
