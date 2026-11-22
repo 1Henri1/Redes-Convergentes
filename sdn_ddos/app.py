@@ -337,11 +337,32 @@ class SdnDdosController(app_manager.OSKenApp):
             )
             # Durante uma suspeita distribuída, continua comparando cada origem
             # com os últimos limites estatísticos válidos, sem recalculá-los.
-            connection_results = connection_detector.evaluate(
-                destination_rates,
-                cycle,
-                update_baseline=not entropy_result.anomalous,
-            )
+            if entropy_result.baseline_ready:
+                # Só inicia a detecção individual depois que a baseline
+                # conjunta do destino foi concluída. O primeiro ciclo após
+                # isso inicializa os limites de PPS/bytes/s; a classificação
+                # de anomalias começa no ciclo seguinte.
+                connection_results = connection_detector.evaluate(
+                    destination_rates,
+                    cycle,
+                    update_baseline=not entropy_result.anomalous,
+                )
+            else:
+                # Durante a coleta da baseline, todas as origens são apenas
+                # contextuais: não há classificação nem sequência de bloqueio.
+                connection_results = {
+                    src: {
+                        "PPS": Detection(
+                            DetectionStatus.BASELINE, float(rate.pps),
+                            len(destination_rates),
+                        ),
+                        "BYTES/S": Detection(
+                            DetectionStatus.BASELINE, float(rate.bps),
+                            len(destination_rates),
+                        ),
+                    }
+                    for src, rate in destination_rates.items()
+                }
 
             # PPS e bytes/s usam exclusivamente os mesmos limites compartilhados
             # calculados para o destino. Não existe um segundo detector de bytes/s
