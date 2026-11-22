@@ -278,3 +278,31 @@ def test_connection_detector_reuses_last_valid_limits_during_suspicion():
     next_result = detector.evaluate(normal, 3, update_baseline=False)
     assert next_result["10.0.0.1"]["PPS"].limit == pytest.approx(expected_pps_limit)
     assert next_result["10.0.0.1"]["BYTES/S"].limit == pytest.approx(expected_bytes_limit)
+
+
+def test_single_extreme_origin_is_excluded_before_destination_mean_and_std():
+    detector = DestinationConnectionDetector(make_config())
+    rates = {
+        "10.0.0.1": connection(17.95, 5455.51),
+        "10.0.0.2": connection(8.97, 2252.19),
+        "10.0.0.3": connection(8.97, 1956.09),
+        "10.0.0.4": connection(15.45, 4218.75),
+        "10.0.0.6": connection(9.47, 2926.65),
+        "10.0.0.7": connection(12.46, 2367.84),
+        "10.0.0.8": connection(10.97, 4649.95),
+        "10.0.0.9": connection(10.97, 5801.46),
+        "10.0.0.11": connection(41.87, 31363.20),
+    }
+
+    result = detector.evaluate(rates, 1)
+
+    attacker = result["10.0.0.11"]
+    assert attacker["PPS"].status is DetectionStatus.ANOMALY
+    assert attacker["BYTES/S"].status is DetectionStatus.ANOMALY
+
+    clean_pps = [rate.pps for src, rate in rates.items() if src != "10.0.0.11"]
+    clean_bps = [rate.bps for src, rate in rates.items() if src != "10.0.0.11"]
+    assert attacker["PPS"].mean == pytest.approx(sum(clean_pps) / len(clean_pps))
+    assert attacker["BYTES/S"].mean == pytest.approx(sum(clean_bps) / len(clean_bps))
+    assert attacker["PPS"].mean < 15.23
+    assert attacker["BYTES/S"].mean < 31363.20
