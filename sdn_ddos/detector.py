@@ -145,11 +145,10 @@ class DestinationPpsDetector:
 
 
 class DestinationConnectionDetector:
-    """Detecta DoS por origem usando limites compartilhados por destino.
+    """Avalia cada origem com os limites calculados no ciclo anterior.
 
-    Quando update_baseline=False, reutiliza os últimos limites calculados em
-    uma janela válida. Assim, tráfego suspeito não altera as referências, mas
-    continua sendo comparado com elas.
+    Depois da avaliação, calcula os limites do próximo ciclo usando somente
+    origens que não foram classificadas como anômalas.
     """
 
     def __init__(self, config: DetectorConfig) -> None:
@@ -158,13 +157,44 @@ class DestinationConnectionDetector:
         self._streaks: Dict[Tuple[str, str], int] = defaultdict(int)
         self._last_limits: Dict[str, tuple] = {}
 
+    @property
+    def has_limits(self) -> bool:
+        return bool(self._last_limits)
+
+    def _calculate_limits(
+        self, rates: Dict[str, object], excluded: set[str] | None = None,
+    ) -> Dict[str, tuple]:
+        excluded = excluded or set()
+        metrics = (
+            ("PPS", lambda rate: float(rate.pps), self._config.minimum_pps),
+            ("BYTES/S", lambda rate: float(rate.bps), 0.0),
+        )
+        reference = {
+            src: rate for src, rate in rates.items() if src not in excluded
+        }
+        if not reference:
+            return {}
+
+        limits: Dict[str, tuple] = {}
+        for metric, getter, floor in metrics:
+            values = [getter(rate) for rate in reference.values()]
+            mean = statistics.fmean(values)
+            std = statistics.stdev(values) if len(values) > 1 else 0.0
+            limit = max(
+                mean + self._config.threshold_factor * std,
+                mean * self._config.min_rate_factor,
+                floor,
+            )
+            limits[metric] = (mean, std, limit, getter)
+        return limits
+
     def evaluate(
         self,
         rates: Dict[str, object],
         cycle: int,
         update_baseline: bool = True,
     ) -> Dict[str, Dict[str, Detection]]:
-        """Compara origens com limites válidos; pode congelar as referências."""
+        """Usa limites anteriores e prepara novos limites para o ciclo seguinte."""
         expired = [
             src for src, seen in self._last_seen.items()
             if cycle - seen >= 2
@@ -177,77 +207,43 @@ class DestinationConnectionDetector:
         if not rates:
             return {}
 
-        metrics = (
-            ("PPS", lambda rate: float(rate.pps), self._config.minimum_pps),
-            ("BYTES/S", lambda rate: float(rate.bps), 0.0),
-        )
-        values_by_metric = {
-            metric: {src: getter(rate) for src, rate in rates.items()}
-            for metric, getter, _floor in metrics
-        }
+        metrics = ("PPS", "BYTES/S")
 
-        # Em ciclos válidos, identifica outliers com mediana e MAD.
-        # Cada origem é comparada com uma referência robusta que não é
-        # deslocada por um único valor extremo (como ocorria com média + 3σ).
-        if update_baseline or not self._last_limits:
-            anomalous_sources = set()
-            limits = {}
-
-            for metric, getter, floor in metrics:
-                values = values_by_metric[metric]
-                sample = list(values.values())
-
-                if len(sample) >= 3:
-                    median = statistics.median(sample)
-                    deviations = [abs(value - median) for value in sample]
-                    mad = statistics.median(deviations)
-                    robust_std = 1.4826 * mad
-                    robust_limit = max(
-                        median + self._config.threshold_factor * robust_std,
-                        median * self._config.min_rate_factor,
-                        floor,
-                    )
-                    anomalous_sources.update(
-                        src for src, value in values.items()
-                        if value > robust_limit
-                    )
-
-            # Estatísticas tradicionais são calculadas somente após remover
-            # todas as origens sinalizadas em qualquer uma das duas métricas.
-            for metric, getter, floor in metrics:
-                values = values_by_metric[metric]
-                reference = {
-                    src: value for src, value in values.items()
-                    if src not in anomalous_sources
-                }
-                if not reference:
-                    # Se todas as origens forem discrepantes, não inventa
-                    # uma referência vazia: mantém a amostra disponível.
-                    reference = values
-
-                reference_values = list(reference.values())
-                mean = statistics.fmean(reference_values)
-                std = (
-                    statistics.stdev(reference_values)
-                    if len(reference_values) > 1 else 0.0
-                )
-                limit = max(
-                    mean + self._config.threshold_factor * std,
-                    mean * self._config.min_rate_factor,
-                    floor,
-                )
-                limits[metric] = (mean, std, limit, getter)
-
+        # No primeiro ciclo ainda não há limites anteriores: ele apenas
+        # estabelece a referência que será aplicada a partir do próximo ciclo.
+        if not self._last_limits:
             if update_baseline:
-                self._last_limits = dict(limits)
-        else:
-            limits = dict(self._last_limits)
+                self._last_limits = self._calculate_limits(rates)
+            results: Dict[str, Dict[str, Detection]] = {}
+            for src, rate in rates.items():
+                results[src] = {}
+                for metric in metrics:
+                    limits = self._last_limits.get(metric)
+                    if limits is None:
+                        results[src][metric] = Detection(
+                            DetectionStatus.BASELINE,
+                            float(rate.pps if metric == "PPS" else rate.bps),
+                            len(rates),
+                        )
+                        continue
+                    mean, std, limit, getter = limits
+                    results[src][metric] = Detection(
+                        DetectionStatus.BASELINE, getter(rate), len(rates),
+                        mean=mean, std=std, limit=limit,
+                    )
+                self._last_seen[src] = cycle
+            return results
 
+        # Congela uma cópia: os resultados deste ciclo sempre usam os mesmos
+        # limites, mesmo que novos limites sejam calculados ao final.
+        active_limits = dict(self._last_limits)
         results: Dict[str, Dict[str, Detection]] = {}
+        anomalous_sources: set[str] = set()
+
         for src, rate in rates.items():
             results[src] = {}
-            for metric, _getter, _floor in metrics:
-                mean, std, limit, getter = limits[metric]
+            for metric in metrics:
+                mean, std, limit, getter = active_limits[metric]
                 value = getter(rate)
                 key = (src, metric)
 
@@ -255,27 +251,28 @@ class DestinationConnectionDetector:
                     streak = self._streaks[key] + 1
                     should_block = streak >= self._config.required_anomalies
                     self._streaks[key] = 0 if should_block else streak
+                    anomalous_sources.add(src)
                     results[src][metric] = Detection(
-                        DetectionStatus.ANOMALY,
-                        value,
-                        len(rates),
-                        mean=mean,
-                        std=std,
-                        limit=limit,
+                        DetectionStatus.ANOMALY, value, len(rates),
+                        mean=mean, std=std, limit=limit,
                         consecutive_anomalies=streak,
                         should_block=should_block,
                     )
                 else:
                     self._streaks[key] = 0
                     results[src][metric] = Detection(
-                        DetectionStatus.NORMAL,
-                        value,
-                        len(rates),
-                        mean=mean,
-                        std=std,
-                        limit=limit,
+                        DetectionStatus.NORMAL, value, len(rates),
+                        mean=mean, std=std, limit=limit,
                     )
             self._last_seen[src] = cycle
+
+        # Os valores atuais só definem os limites do próximo ciclo. Origens
+        # anômalas são excluídas das duas métricas; com entropia suspeita,
+        # update_baseline=False mantém integralmente os limites anteriores.
+        if update_baseline:
+            next_limits = self._calculate_limits(rates, anomalous_sources)
+            if next_limits:
+                self._last_limits = next_limits
 
         return results
 
