@@ -69,7 +69,6 @@ class SdnDdosController(app_manager.OSKenApp):
         self._destination_anomaly_start: Dict[str, int] = {}
         self._destination_candidates: Dict[str, set[str]] = {}
         # Últimas estatísticas limpas; ficam congeladas enquanto houver suspeita.
-        self._destination_metric_snapshots: Dict[str, tuple[float, float, float, float, float, float]] = {}
         self._blocklist = BlockList(self._config.block_time)
         self._flows = FlowManager()
         self._reporter = ConsoleReporter()
@@ -119,7 +118,6 @@ class SdnDdosController(app_manager.OSKenApp):
                 self._destination_entropy_detectors.pop(ip, None)
                 self._destination_anomaly_start.pop(ip, None)
                 self._destination_candidates.pop(ip, None)
-                self._destination_metric_snapshots.pop(ip, None)
             for pair in list(self._pair_first_seen_cycle):
                 if pair[0] in disconnected_ips or pair[1] in disconnected_ips:
                     self._pair_first_seen_cycle.pop(pair, None)
@@ -315,7 +313,6 @@ class SdnDdosController(app_manager.OSKenApp):
                     self._destination_zero_cycles.pop(dst, None)
                     self._destination_anomaly_start.pop(dst, None)
                     self._destination_candidates.pop(dst, None)
-                    self._destination_metric_snapshots.pop(dst, None)
                     for pair in list(self._pair_first_seen_cycle):
                         if pair[1] == dst:
                             self._pair_first_seen_cycle.pop(pair, None)
