@@ -10,7 +10,6 @@ informado a ``run_apps`` (``sdn_ddos.app``); por isso ela não é reexportada.
 """
 
 import logging
-import statistics
 import time
 from typing import Any, Dict
 
