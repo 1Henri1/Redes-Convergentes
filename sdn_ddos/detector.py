@@ -239,6 +239,16 @@ class DestinationConnectionDetector:
         active_limits = dict(self._last_limits)
         results: Dict[str, Dict[str, Detection]] = {}
         anomalous_sources: set[str] = set()
+        collective_anomaly = all(
+            any(
+                getter(rate) > active_limits[metric][2]
+                for metric, getter in (
+                    ("PPS", lambda item: float(item.pps)),
+                    ("BYTES/S", lambda item: float(item.bps)),
+                )
+            )
+            for rate in rates.values()
+        ) and len(rates) > 1
 
         for src, rate in rates.items():
             results[src] = {}
@@ -249,8 +259,18 @@ class DestinationConnectionDetector:
 
                 if value > limit:
                     streak = self._streaks[key] + 1
-                    should_block = streak >= self._config.required_anomalies
-                    self._streaks[key] = 0 if should_block else streak
+                    should_block = (
+                        not collective_anomaly
+                        and streak >= self._config.required_anomalies
+                    )
+                    if collective_anomaly:
+                        # Uma elevação simultânea de todas as origens não
+                        # permite atribuir um DoS individual; deixa a análise
+                        # distribuída decidir sobre o destino.
+                        self._streaks[key] = 0
+                        streak = 1
+                    else:
+                        self._streaks[key] = 0 if should_block else streak
                     anomalous_sources.add(src)
                     results[src][metric] = Detection(
                         DetectionStatus.ANOMALY, value, len(rates),
