@@ -347,10 +347,6 @@ class SdnDdosController(app_manager.OSKenApp):
             # calculados para o destino. Não existe um segundo detector de bytes/s
             # com baseline independente, pois ele poderia gerar bloqueios divergentes.
             pair_bps_results = {}
-            suspicious_sources = {
-                src for src, metrics in connection_results.items()
-                if any(result.status is DetectionStatus.ANOMALY for result in metrics.values())
-            }
             dos_sources = set()
             for src, rate in destination_rates.items():
                 datapath = self._datapath_for_ip(src)
@@ -370,11 +366,6 @@ class SdnDdosController(app_manager.OSKenApp):
                     or (bytes_result is not None and bytes_result.should_block)
                 ):
                     dos_sources.add(src)
-
-            # Uma anomalia em qualquer métrica torna a origem suspeita para
-            # todas as médias. Entropia anômala torna suspeitas todas as origens.
-            if entropy_result.anomalous:
-                suspicious_sources.update(destination_rates)
 
             # Mantém apenas origens recentes como candidatas à atribuição do DDoS.
             lookback = max(self._config.baseline_samples, self._config.required_anomalies + 1)
