@@ -248,3 +248,33 @@ def test_aggregate_detector_can_skip_anomalous_baseline_samples():
     ready = detector.evaluate(100)
     assert ready.status is DetectionStatus.BASELINE
     assert ready.baseline_size == 5
+
+
+def test_connection_detector_reuses_last_valid_limits_during_suspicion():
+    detector = DestinationConnectionDetector(make_config())
+    normal = {
+        f"10.0.0.{i}": connection(10, 100)
+        for i in range(1, 6)
+    }
+
+    # Registra os últimos limites válidos do destino.
+    trained = detector.evaluate(normal, 1)
+    expected_pps_limit = trained["10.0.0.1"]["PPS"].limit
+    expected_bytes_limit = trained["10.0.0.1"]["BYTES/S"].limit
+
+    # Uma janela suspeita não recalcula nem substitui as referências.
+    suspicious = dict(normal)
+    suspicious["10.0.0.5"] = connection(40, 400)
+    result = detector.evaluate(suspicious, 2, update_baseline=False)
+
+    assert result["10.0.0.5"]["PPS"].status is DetectionStatus.ANOMALY
+    assert result["10.0.0.5"]["BYTES/S"].status is DetectionStatus.ANOMALY
+    assert result["10.0.0.5"]["PPS"].mean == pytest.approx(10)
+    assert result["10.0.0.5"]["BYTES/S"].mean == pytest.approx(100)
+    assert result["10.0.0.5"]["PPS"].limit == pytest.approx(expected_pps_limit)
+    assert result["10.0.0.5"]["BYTES/S"].limit == pytest.approx(expected_bytes_limit)
+
+    # A janela suspeita não altera os limites guardados.
+    next_result = detector.evaluate(normal, 3, update_baseline=False)
+    assert next_result["10.0.0.1"]["PPS"].limit == pytest.approx(expected_pps_limit)
+    assert next_result["10.0.0.1"]["BYTES/S"].limit == pytest.approx(expected_bytes_limit)
