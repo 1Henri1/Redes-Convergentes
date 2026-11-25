@@ -86,6 +86,8 @@ class PingScenario:
                         "started_at": started_at,
                         "ended_at": None,
                         "finalized": False,
+                        "finalizing": False,
+                        "finalization_event": threading.Event(),
                     }
                     commands.append(command)
                     self._commands.append(command)
@@ -166,24 +168,50 @@ class PingScenario:
         return events
 
     def _finalize_command(self, command: dict) -> None:
-        """Classifica uma execução pela interseção com qualquer bloqueio da origem."""
+        """Classifica uma execução uma única vez, sincronizando as threads."""
         with self._lock:
             if command["finalized"]:
                 return
-            command["ended_at"] = time.monotonic()
-            command["finalized"] = True
 
-        events = self._read_block_events()
-        started = command["started_at"]
-        ended = command["ended_at"]
-        source_ip = command["source_ip"]
-        was_blocked = any(
-            event["ip"] == source_ip
-            and event["start"] <= ended
-            and event["end"] >= started
-            for event in events
-        )
-        command["result"] = "bloqueadas" if was_blocked else "normais"
+            if command["finalizing"]:
+                event = command["finalization_event"]
+                is_owner = False
+            else:
+                command["finalizing"] = True
+                command["ended_at"] = time.monotonic()
+                event = command["finalization_event"]
+                is_owner = True
+
+        if not is_owner:
+            event.wait()
+            # Se a thread responsável falhou, tenta novamente.
+            return self._finalize_command(command)
+
+        try:
+            events = self._read_block_events()
+            started = command["started_at"]
+            ended = command["ended_at"]
+            source_ip = command["source_ip"]
+
+            was_blocked = any(
+                item["ip"] == source_ip
+                and item["start"] <= ended
+                and item["end"] >= started
+                for item in events
+            )
+
+            with self._lock:
+                command["result"] = "bloqueadas" if was_blocked else "normais"
+                command["finalized"] = True
+                command["finalizing"] = False
+
+        except Exception:
+            with self._lock:
+                command["finalizing"] = False
+            raise
+
+        finally:
+            event.set()
 
     def wait_for_all(self) -> None:
         """Espera todos os comandos iniciados, inclusive os de grupos anteriores."""
@@ -198,7 +226,10 @@ class PingScenario:
         with self._lock:
             if self._exported:
                 return
-            commands = [c for c in self._commands if c["finalized"]]
+            commands = [
+                c for c in self._commands
+                if c["finalized"] and "result" in c
+            ]
 
         totals = defaultdict(lambda: {"normais": 0, "bloqueadas": 0})
         for command in commands:
