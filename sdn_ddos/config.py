@@ -30,12 +30,14 @@ class DetectorConfig:
     minimum_distributed_sources: int = 2
     required_anomalies: int = 2
     block_time: int = 30
+    experiment_duration: float = 300.0
 
     def __post_init__(self) -> None:
         """Valida os parâmetros logo na criação (fail-fast)."""
         rules = (
             (self.monitor_interval > 0, "monitor_interval deve ser > 0"),
             (self.report_interval > 0, "report_interval deve ser > 0"),
+            (self.experiment_duration > 0, "experiment_duration deve ser > 0"),
             (self.baseline_samples >= 2, "baseline_samples deve ser >= 2"),
             (
                 self.history_size >= self.baseline_samples,
