@@ -57,19 +57,78 @@ O encerramento também interrompe processos de ping ainda ativos e finaliza a ex
 
 ### 2.1. Topologia e geração de tráfego
 
-A topologia padrão contém **25 hosts conectados a um switch Open vSwitch**, com o controlador remoto OS-Ken. O destino dos testes é o host `h25`.
+A topologia padrão contém **25 hosts conectados a um switch Open vSwitch**, com o controlador remoto OS-Ken. O destino dos testes é o host `h25`, cujo IP é `10.0.0.25`.
 
-O gerador utiliza diferentes grupos de origem:
+A divisão dos endereços IP é fixa no script `tools/run_mininet.py`:
 
-| Grupo | Hosts | Comportamento |
-|---|---|---|
-| Tráfego normal | h1 a h10 | Envio com intervalos e tamanhos de pacote variáveis |
-| DoS | h11 e h12 | Maior frequência de envio a partir de uma origem |
-| DDoS | h13 a h24 | Envio simultâneo de várias origens |
+| Tipo de tráfego | Hosts | Endereços IP | Comportamento |
+|---|---|---|---|
+| Normal | h1 a h10 | 10.0.0.1 a 10.0.0.10 | Tráfego de menor frequência, com parâmetros variáveis |
+| DoS | h11 e h12 | 10.0.0.11 e 10.0.0.12 | Maior frequência de envio concentrada em poucas origens |
+| DDoS | h13 a h24 | 10.0.0.13 a 10.0.0.24 | Várias origens enviando tráfego simultaneamente |
+| Destino | h25 | 10.0.0.25 | Recebe os pings dos demais hosts |
 
-Após duas etapas iniciais de tráfego normal, os cenários seguintes são sorteados com probabilidades de 80% para tráfego normal, 10% para DoS e 10% para DDoS. A geração utiliza variações aleatórias de intervalo, quantidade e tamanho dos pacotes para evitar que todas as execuções tenham exatamente o mesmo padrão.
+O AutoPing é implementado em `tools/ping_scenario.py`. Ele inicia automaticamente os comandos ping e executa uma sequência de etapas:
 
-### 2.2. Resultado dos comandos ping
+1. Duas etapas iniciais de tráfego normal, uma com hosts h1 a h5 e outra com h6 a h10.
+2. Etapas adicionais sorteadas entre tráfego normal, DoS e DDoS.
+3. Ao final, aguarda os comandos ping terminarem e exporta o CSV com a classificação das execuções.
+
+Por padrão, são executadas **10 etapas no total**: duas etapas normais obrigatórias e oito etapas sorteadas. Em cada sorteio, as probabilidades são de 80% para normal, 10% para DoS e 10% para DDoS. Essas probabilidades definem o tipo de etapa, não garantem que todos os hosts daquele grupo iniciarão um ping: cada origem também possui uma probabilidade individual de 80% de ser ativada.
+
+Os parâmetros de geração são aleatorizados dentro de faixas definidas no código:
+
+| Tipo | Intervalo entre pacotes | Quantidade de pacotes | Tamanho do payload |
+|---|---:|---:|---:|
+| Normal | 0,05 a 0,12 s | 200 a 300 | 50 a 85 bytes |
+| DoS | 0,01 a 0,04 s | 500 a 700 | 50 a 125 bytes |
+| DDoS | 0,02 a 0,05 s | 200 a 300 | 50 a 85 bytes |
+
+Os intervalos menores representam maior frequência de envio. No cenário DDoS, as origens são iniciadas com pequenas pausas entre si, permitindo que várias fontes gerem tráfego concorrente.
+
+### 2.2. Personalização do AutoPing
+
+Os parâmetros do cenário automático são alterados diretamente nos métodos da classe `PingScenario`, em `tools/ping_scenario.py`. Não há, atualmente, opções de linha de comando para esses ajustes.
+
+**Número total de etapas:** no método `main()`, altere a condição:
+
+```python
+while cont < 10:
+```
+
+O valor `10` representa o total de etapas, incluindo as duas etapas normais iniciais. Por exemplo, `while cont < 14:` executa 14 etapas: duas normais obrigatórias e 12 sorteadas. O valor deve ser maior que 2 para manter etapas aleatórias após a inicialização.
+
+**Probabilidades dos tipos de tráfego:** no mesmo método, altere os pesos:
+
+```python
+tipo = rd.choices(
+    ["normal", "dos", "ddos"],
+    weights=[80, 10, 10],
+    k=1,
+)[0]
+```
+
+A ordem dos pesos corresponde à lista de tipos. Por exemplo, `weights=[60, 20, 20]` define probabilidades de 60% para normal, 20% para DoS e 20% para DDoS. Os pesos são relativos; não precisam necessariamente somar 100, pois são normalizados pelo sorteio.
+
+**Probabilidade de ativação de cada origem:** nos métodos `Normal()`, `AtaqDos()` e `AtaqDDos()`, altere a condição:
+
+```python
+if rd.random() < 0.8:
+```
+
+O valor `0.8` equivale a 80% de chance de cada host iniciar seu comando ping. Por exemplo, `0.5` representa 50%. Essa probabilidade é independente da probabilidade de escolha do tipo de etapa.
+
+**Intensidade e duração dos pings:** os parâmetros são definidos em cada chamada de `start_pings()`:
+
+- `interval=rd.uniform(min, max)`: sorteia o intervalo entre pacotes, em segundos. Diminuir os limites aumenta a frequência de envio.
+- `count=rd.randint(min, max)`: sorteia a quantidade de pacotes enviados por origem.
+- `packet_size=rd.randint(min, max)`: sorteia o tamanho do payload ICMP, em bytes.
+
+Altere as faixas nos métodos `Normal()`, `AtaqDos()` e `AtaqDDos()` para modificar cada comportamento separadamente. Por exemplo, para aumentar a intensidade do DoS, pode-se reduzir a faixa de `interval` ou aumentar a faixa de `count`.
+
+**Pausas entre as origens e etapas:** as chamadas a `self.wait(rd.uniform(min, max))` controlam as pausas em segundos. Nos métodos de geração, elas definem o intervalo entre o início dos hosts; em `main()`, a pausa ao final de cada etapa sorteada. Ajustá-las altera a sobreposição temporal dos tráfegos.
+
+### 2.3. Resultado dos comandos ping
 
 Ao terminar o cenário, é gerado o arquivo `resultado_comandos_ping.csv`, com uma linha por origem:
 
