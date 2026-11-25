@@ -314,10 +314,10 @@ class PingScenario:
         grupo = self.Normal(grupo, cont)
         cont += 1
 
-        while cont < 10:
+        while cont < 50:
             tipo = rd.choices(
                 ["normal", "dos", "ddos"],
-                weights=[80, 10, 10],
+                weights=[60, 20, 20],
                 k=1,
             )[0]
             if tipo == "normal":
