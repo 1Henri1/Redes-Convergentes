@@ -15,7 +15,7 @@ from typing import Sequence
 
 class PingScenario:
     """Executa comandos ping e contabiliza cada processo uma única vez."""
-
+    
     def __init__(self, net=None) -> None:
         self.net = net
         self._groups: dict[str, list[dict]] = {}
@@ -94,6 +94,14 @@ class PingScenario:
                 self._terminate_commands(commands)
                 raise
 
+        # Monitora cada processo independentemente do cenário principal.
+        for command in commands:
+            threading.Thread(
+                target=self._monitor_command,
+                args=(command,),
+                daemon=True,
+            ).start()
+
         print(
             f"[PING TESTE] Grupo '{group}' iniciado: "
             f"{', '.join(sources)} -> {destination}, "
@@ -101,6 +109,11 @@ class PingScenario:
             f"tamanho={packet_size} bytes",
             flush=True,
         )
+
+    def _monitor_command(self, command: dict) -> None:
+        """Registra o término real do processo ping."""
+        command["process"].wait()
+        self._finalize_command(command)
 
     def wait(self, seconds: float) -> None:
         if seconds < 0:
@@ -228,10 +241,10 @@ class PingScenario:
                     sources=[src],
                     destination="h25",
                     interval=rd.uniform(0.05, 0.12),
-                    count=rd.randint(500, 700),
+                    count=rd.randint(200, 300),
                     packet_size=rd.randint(50, 85),
                 )
-                self.wait(rd.uniform(1, 3))
+                self.wait(rd.uniform(1.5, 2.5))
         return 0 if Group == 1 else 1
 
     def AtaqDos(self, cont: int) -> None:
@@ -242,11 +255,11 @@ class PingScenario:
                     group=f"D{i}{cont}",
                     sources=[f"h{i}"],
                     destination="h25",
-                    interval=rd.uniform(0.01, 0.03),
-                    count=rd.randint(1000, 1500),
+                    interval=rd.uniform(0.01, 0.04),
+                    count=rd.randint(500, 700),
                     packet_size=rd.randint(50, 125),
                 )
-                self.wait(rd.uniform(1, 3))
+                self.wait(rd.uniform(1.5, 2.5))
 
     def AtaqDDos(self, cont: int) -> None:
         """DDoS: hosts 13 a 24, cada um com 80% de chance."""
@@ -257,23 +270,23 @@ class PingScenario:
                     sources=[f"h{i}"],
                     destination="h25",
                     interval=rd.uniform(0.02, 0.05),
-                    count=rd.randint(500, 700),
+                    count=rd.randint(200, 300),
                     packet_size=rd.randint(50, 85),
                 )
                 self.wait(rd.uniform(0.1, 0.5))
 
     def main(self) -> None:
-        """Executa os cenários com probabilidades de 70%, 15% e 15%."""
+        """Executa os cenários com probabilidades de 80%, 10% e 10%."""
         cont = 0
         grupo = self.Normal(0, cont)
         cont += 1
         grupo = self.Normal(grupo, cont)
         cont += 1
 
-        while cont < 50:
+        while cont < 10:
             tipo = rd.choices(
                 ["normal", "dos", "ddos"],
-                weights=[70, 15, 15],
+                weights=[80, 10, 10],
                 k=1,
             )[0]
             if tipo == "normal":
@@ -283,7 +296,7 @@ class PingScenario:
             else:
                 self.AtaqDDos(cont)
             cont += 1
-            self.wait(rd.uniform(1, 2))
+            self.wait(rd.uniform(2, 4))
 
     def start(self, net) -> None:
         if self._thread and self._thread.is_alive():
