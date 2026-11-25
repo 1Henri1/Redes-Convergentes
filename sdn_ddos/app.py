@@ -9,8 +9,9 @@ Importante: o OS-Ken só carrega a classe se ela estiver *definida* no módulo
 informado a ``run_apps`` (``sdn_ddos.app``); por isso ela não é reexportada.
 """
 
-import csv
+import json
 import logging
+import os
 import time
 from typing import Any, Dict
 
@@ -77,11 +78,13 @@ class SdnDdosController(app_manager.OSKenApp):
         # Telemetria dos pings manuais: chave do pedido = IPs, ID ICMP e sequência.
         self._icmp_pending: Dict[tuple, tuple[float, tuple]] = {}
         self._icmp_stats: Dict[tuple, Dict[str, float]] = {}
-        self._ping_results: Dict[str, Dict[str, int]] = {}
-        self._counted_pings: set[tuple[str, str, int, int]] = set()
-        self._experiment_duration = self._config.experiment_duration
-        self._experiment_started_at: float | None = None
-        self._experiment_finished = False
+        # Arquivo compartilhado com tools/ping_scenario.py. Os dois processos
+        # usam time.monotonic() do mesmo sistema operacional.
+        self._block_events_path = os.getenv(
+            "SDN_DDOS_BLOCK_EVENTS_PATH", "/tmp/sdn_ddos_block_events.jsonl"
+        )
+        with open(self._block_events_path, "w", encoding="utf-8"):
+            pass
 
         self._reporter.banner(self._config)
         self._monitor_thread = hub.spawn(self._monitor_loop)
@@ -158,7 +161,6 @@ class SdnDdosController(app_manager.OSKenApp):
 
         # Conta o pacote inicial; cópias de regras de encaminhamento não devem
         # ser reenviadas pelo controlador.
-        self._record_ping_result(pkt)
         self._record_packet(pkt)
         if msg.reason == datapath.ofproto.OFPR_ACTION:
             return
@@ -238,7 +240,6 @@ class SdnDdosController(app_manager.OSKenApp):
 
             cycle += 1
             now = time.monotonic()
-            self._finish_ping_experiment_if_due(now)
             if now >= next_report:
                 current = self._stats
                 interval_stats = ControllerStats(
@@ -473,57 +474,6 @@ class SdnDdosController(app_manager.OSKenApp):
 
 
 
-    def _record_ping_result(self, pkt: packet.Packet) -> None:
-        """Conta cada Echo Request uma única vez como NORMAL ou BLOQUEADA."""
-        ip_pkt = pkt.get_protocol(ipv4.ipv4)
-        icmp_pkt = pkt.get_protocol(icmp.icmp)
-        if ip_pkt is None or icmp_pkt is None or icmp_pkt.type != 8:
-            return
-        data = getattr(icmp_pkt, "data", None)
-        ident = getattr(data, "id", None)
-        seq = getattr(data, "seq", None)
-        if ident is None or seq is None:
-            return
-
-        key = (ip_pkt.src, ip_pkt.dst, int(ident), int(seq))
-        if key in self._counted_pings:
-            return
-        self._counted_pings.add(key)
-        if self._experiment_started_at is None:
-            self._experiment_started_at = time.monotonic()
-
-        blocked = (
-            self._blocklist.is_blocked(ip_pkt.src)
-            or self._blocklist.is_blocked(ip_pkt.dst)
-        )
-        category = "bloqueadas" if blocked else "normais"
-        stats = self._ping_results.setdefault(
-            ip_pkt.src, {"normais": 0, "bloqueadas": 0}
-        )
-        stats[category] += 1
-
-    def _finish_ping_experiment_if_due(self, now: float) -> None:
-        """Exporta o resultado uma única vez após a duração configurada."""
-        if (
-            self._experiment_finished
-            or self._experiment_duration <= 0
-            or self._experiment_started_at is None
-            or now - self._experiment_started_at < self._experiment_duration
-        ):
-            return
-
-        path = "resultado_experimento.csv"
-        with open(path, "w", newline="", encoding="utf-8") as csv_file:
-            writer = csv.writer(csv_file)
-            writer.writerow(["Origem", "Normais", "Bloqueadas", "Total"])
-            for source, values in sorted(self._ping_results.items()):
-                normal = values["normais"]
-                blocked = values["bloqueadas"]
-                writer.writerow([source, normal, blocked, normal + blocked])
-
-        self._experiment_finished = True
-        _logger.info("Experimento finalizado. CSV salvo em %s", path)
-
     def _record_packet(self, pkt: packet.Packet) -> None:
         """Registra taxas e mede os pings manuais observados pelo switch."""
         ip_pkt = pkt.get_protocol(ipv4.ipv4)
@@ -654,7 +604,17 @@ class SdnDdosController(app_manager.OSKenApp):
 
     def _block(self, datapath: Any, ip: str) -> None:
         """Aplica bloqueio progressivo e registra sua duração efetiva."""
+        block_started = time.monotonic()
         duration = self._blocklist.block(ip)
+        event = {
+            "ip": ip,
+            "start": block_started,
+            "end": block_started + duration,
+        }
+        # Uma linha por ativação de bloqueio; o cenário verifica a interseção
+        # entre esse intervalo e a execução de cada comando ping.
+        with open(self._block_events_path, "a", encoding="utf-8") as events_file:
+            events_file.write(json.dumps(event) + "\\n")
         self._flows.install_drop(datapath, ip, duration)
         self._stats.blocks += 1
         self._reporter.block_activated(ip, duration)
