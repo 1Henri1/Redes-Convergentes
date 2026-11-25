@@ -1,21 +1,37 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import csv
+import json
+import os
 import random as rd
 import subprocess
 import threading
+import time
+from collections import defaultdict
+from pathlib import Path
 from typing import Sequence
 
 
 class PingScenario:
-    """Executa grupos de ping em paralelo dentro de uma rede Mininet."""
+    """Executa comandos ping e contabiliza cada processo uma única vez."""
 
     def __init__(self, net=None) -> None:
         self.net = net
-        self._groups: dict[str, list[subprocess.Popen]] = {}
+        self._groups: dict[str, list[dict]] = {}
+        self._commands: list[dict] = []
         self._lock = threading.RLock()
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
+        self._block_events_path = Path(os.getenv(
+            "SDN_DDOS_BLOCK_EVENTS_PATH",
+            "/tmp/sdn_ddos_block_events.jsonl",
+        ))
+        self._csv_path = Path(os.getenv(
+            "SDN_DDOS_PING_RESULTS_PATH",
+            "resultado_comandos_ping.csv",
+        ))
+        self._exported = False
 
     def start_pings(
         self,
@@ -26,19 +42,15 @@ class PingScenario:
         count: int = 100,
         packet_size: int = 56,
     ) -> None:
-        """Inicia pings; count é a quantidade por origem e packet_size é em bytes."""
+        """Inicia um processo ping por origem; cada processo vale uma ocorrência."""
         if self.net is None:
             raise RuntimeError("A rede Mininet ainda não foi associada ao cenário.")
         if not group.strip():
             raise ValueError("Informe um nome para o grupo.")
         if not sources:
             raise ValueError("Informe ao menos uma origem.")
-        if interval <= 0:
-            raise ValueError("O intervalo deve ser positivo.")
-        if count <= 0:
-            raise ValueError("A quantidade de pacotes deve ser positiva.")
-        if packet_size < 0:
-            raise ValueError("O tamanho do pacote não pode ser negativo.")
+        if interval <= 0 or count <= 0 or packet_size < 0:
+            raise ValueError("Intervalo/quantidade inválidos ou tamanho negativo.")
         if destination in sources:
             raise ValueError("O destino não pode ser uma das origens.")
 
@@ -48,10 +60,13 @@ class PingScenario:
                 return
             if group in self._groups:
                 raise ValueError(f"O grupo '{group}' já existe.")
-            processes = []
+
+            commands = []
             try:
                 for source in sources:
-                    host = self.net.get(source)  # valida o host
+                    host = self.net.get(source)
+                    source_ip = host.IP()
+                    started_at = time.monotonic()
                     process = host.popen(
                         [
                             "ping", "-n",
@@ -63,13 +78,20 @@ class PingScenario:
                         stdout=subprocess.DEVNULL,
                         stderr=subprocess.STDOUT,
                     )
-                    processes.append(process)
-                self._groups[group] = processes
+                    command = {
+                        "process": process,
+                        "source": source,
+                        "source_ip": source_ip,
+                        "destination": destination,
+                        "started_at": started_at,
+                        "ended_at": None,
+                        "finalized": False,
+                    }
+                    commands.append(command)
+                    self._commands.append(command)
+                self._groups[group] = commands
             except Exception:
-                for process in processes:
-                    if process.poll() is None:
-                        process.terminate()
-                        process.wait()
+                self._terminate_commands(commands)
                 raise
 
         print(
@@ -81,7 +103,6 @@ class PingScenario:
         )
 
     def wait(self, seconds: float) -> None:
-        """Insere uma pausa na sequência sem bloquear o encerramento do cenário."""
         if seconds < 0:
             raise ValueError("A pausa não pode ser negativa.")
         print(f"[PING TESTE] Aguardando {seconds:g} segundos...", flush=True)
@@ -89,130 +110,205 @@ class PingScenario:
             raise InterruptedError("Execução do cenário interrompida.")
 
     def stop_pings(self, group: str) -> None:
-        """Interrompe somente os processos pertencentes ao grupo informado."""
         with self._lock:
-            processes = self._groups.pop(group, [])
-        self._terminate(processes)
+            commands = self._groups.pop(group, [])
+        self._terminate_commands(commands)
+        for command in commands:
+            self._finalize_command(command)
         print(f"[PING TESTE] Grupo '{group}' encerrado.", flush=True)
 
     @staticmethod
-    def _terminate(processes: Sequence[subprocess.Popen]) -> None:
-        for process in processes:
+    def _terminate_commands(commands: Sequence[dict]) -> None:
+        for command in commands:
+            process = command["process"]
             if process.poll() is None:
                 process.terminate()
-        for process in processes:
+        for command in commands:
+            process = command["process"]
             try:
                 process.wait(timeout=2)
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait()
 
+    def _read_block_events(self) -> list[dict]:
+        """Lê os intervalos de bloqueio registrados pelo controlador SDN."""
+        events = []
+        try:
+            with self._block_events_path.open("r", encoding="utf-8") as file:
+                for line in file:
+                    try:
+                        event = json.loads(line)
+                        if {"ip", "start", "end"} <= event.keys():
+                            events.append(event)
+                    except (json.JSONDecodeError, TypeError):
+                        continue
+        except FileNotFoundError:
+            print(
+                f"[PING TESTE] Arquivo de bloqueios não encontrado: "
+                f"{self._block_events_path}. Verifique se o controlador está ativo "
+                "e se ambos os processos usam o mesmo caminho.",
+                flush=True,
+            )
+        return events
+
+    def _finalize_command(self, command: dict) -> None:
+        """Classifica uma execução pela interseção com qualquer bloqueio da origem."""
+        with self._lock:
+            if command["finalized"]:
+                return
+            command["ended_at"] = time.monotonic()
+            command["finalized"] = True
+
+        events = self._read_block_events()
+        started = command["started_at"]
+        ended = command["ended_at"]
+        source_ip = command["source_ip"]
+        was_blocked = any(
+            event["ip"] == source_ip
+            and event["start"] <= ended
+            and event["end"] >= started
+            for event in events
+        )
+        command["result"] = "bloqueadas" if was_blocked else "normais"
+
+    def wait_for_all(self) -> None:
+        """Espera todos os comandos iniciados, inclusive os de grupos anteriores."""
+        with self._lock:
+            commands = list(self._commands)
+        for command in commands:
+            command["process"].wait()
+            self._finalize_command(command)
+
+    def export_results(self) -> None:
+        """Exporta uma linha por origem com contagem de comandos ping."""
+        with self._lock:
+            if self._exported:
+                return
+            commands = [c for c in self._commands if c["finalized"]]
+            self._exported = True
+
+        totals = defaultdict(lambda: {"normais": 0, "bloqueadas": 0})
+        for command in commands:
+            totals[(command["source"], command["source_ip"])][command["result"]] += 1
+
+        self._csv_path.parent.mkdir(parents=True, exist_ok=True)
+        with self._csv_path.open("w", newline="", encoding="utf-8") as csv_file:
+            writer = csv.writer(csv_file)
+            writer.writerow(["Origem", "IP", "Normais", "Bloqueadas", "Total"])
+            for (source, source_ip), values in sorted(totals.items()):
+                normal = values["normais"]
+                blocked = values["bloqueadas"]
+                writer.writerow([source, source_ip, normal, blocked, normal + blocked])
+
+        print(
+            f"[PING TESTE] CSV exportado: {self._csv_path} "
+            f"({len(commands)} comandos contabilizados).",
+            flush=True,
+        )
+
     def stop_all(self) -> None:
-        """Interrompe todos os grupos ainda ativos."""
         with self._lock:
             groups = list(self._groups.values())
             self._groups.clear()
-        for processes in groups:
-            self._terminate(processes)
+        for commands in groups:
+            self._terminate_commands(commands)
+            for command in commands:
+                self._finalize_command(command)
 
-    def Normal(self, Group: int, cont: int)-> int:
-        for i in range(Group*5+1,Group*5+6):
-            src = f"h{i}"
-            num = rd.randint(1, 5)
-            if num<5:
+    def Normal(self, Group: int, cont: int) -> int:
+        """Tráfego normal: cinco hosts, cada um com 80% de chance."""
+        for i in range(Group * 5 + 1, Group * 5 + 6):
+            if rd.random() < 0.8:
+                src = f"h{i}"
                 self.start_pings(
                     group=f"N{i}{cont}",
                     sources=[src],
                     destination="h25",
-                    interval=0.01+0.001*num,
-                    count=int(5000/(num+2)),
-                    packet_size=int(200+20*(num)/(Group+2)),
+                    interval=rd.uniform(0.05, 0.12),
+                    count=rd.randint(500, 700),
+                    packet_size=rd.randint(50, 85),
                 )
-                self.wait(num)
-        if Group == 1:
-            return 0
-        else:
-            return 1
+                self.wait(rd.uniform(1, 3))
+        return 0 if Group == 1 else 1
 
-    def AtaqDos(self, cont: int)-> None:
-            for i in range(11,13):
-                src = f"h{i}"
-                num = rd.randint(1, 5)
-                num2 = rd.randint(1,10)
-                if num<5:
-                    self.start_pings(
-                        group=f"D{i}{cont}",
-                        sources=[src],
-                        destination="h25",
-                        interval=0.005+0.005*(num2/num**2),
-                        count=int(5000/num**2*num2),
-                        packet_size=int(200*(num**2/num2)),
-                    )
-                    self.wait(num)
+    def AtaqDos(self, cont: int) -> None:
+        """DoS: hosts 11 e 12, cada um com 80% de chance."""
+        for i in range(11, 13):
+            if rd.random() < 0.8:
+                self.start_pings(
+                    group=f"D{i}{cont}",
+                    sources=[f"h{i}"],
+                    destination="h25",
+                    interval=rd.uniform(0.01, 0.03),
+                    count=rd.randint(1000, 1500),
+                    packet_size=rd.randint(50, 125),
+                )
+                self.wait(rd.uniform(1, 3))
 
-    def AtaqDDos(self, cont: int)-> None:
-            for i in range(13,25):
-                src = f"h{i}"
-                num = rd.randint(1, 5)
-                num2 = rd.randint(5,10)
-                if num<5:
-                    self.start_pings(
-                        group=f"DD{i}{cont}",
-                        sources=[src],
-                        destination="h25",
-                        interval=0.01+0.005*(num2/num),
-                        count=int(5000/num**2*num2),
-                        packet_size=int(150+20*(num**2/num2)),
-                    )
-                    self.wait(num)
+    def AtaqDDos(self, cont: int) -> None:
+        """DDoS: hosts 13 a 24, cada um com 80% de chance."""
+        for i in range(13, 25):
+            if rd.random() < 0.8:
+                self.start_pings(
+                    group=f"DD{i}{cont}",
+                    sources=[f"h{i}"],
+                    destination="h25",
+                    interval=rd.uniform(0.02, 0.05),
+                    count=rd.randint(500, 700),
+                    packet_size=rd.randint(50, 85),
+                )
+                self.wait(rd.uniform(0.1, 0.5))
 
     def main(self) -> None:
+        """Executa os cenários com probabilidades de 70%, 15% e 15%."""
         cont = 0
-        grupo = self.Normal(0,cont)
-        self.wait(15)
-        cont+=1
-        grupo = self.Normal(grupo,cont)
-        self.wait(15)
-        cont+=1
-        while True:
-            num = rd.randint(0, 10)
-            if num<5:
-                grupo = self.Normal(grupo,cont)
-                self.wait(25)
-            elif num<10:
-                self.AtaqDDos(cont)
-                self.wait(10)
-                cont+=1
-            elif num==8:
+        grupo = self.Normal(0, cont)
+        cont += 1
+        grupo = self.Normal(grupo, cont)
+        cont += 1
+
+        while cont < 50:
+            tipo = rd.choices(
+                ["normal", "dos", "ddos"],
+                weights=[70, 15, 15],
+                k=1,
+            )[0]
+            if tipo == "normal":
+                grupo = self.Normal(grupo, cont)
+            elif tipo == "dos":
                 self.AtaqDos(cont)
-                self.wait(10)
             else:
                 self.AtaqDDos(cont)
-                self.wait(10)
-            cont+=1
+            cont += 1
+            self.wait(rd.uniform(1, 2))
 
     def start(self, net) -> None:
-        """Executa main() em segundo plano para manter a CLI do Mininet disponível."""
         if self._thread and self._thread.is_alive():
             raise RuntimeError("O cenário já está em execução.")
         self.net = net
         self._stop_event.clear()
+        self._exported = False
+        self._commands.clear()
+        self._groups.clear()
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
     def _run(self) -> None:
         try:
             self.main()
+            self.wait_for_all()
         except InterruptedError:
             print("[PING TESTE] Cenário interrompido.", flush=True)
         except Exception as error:
             print(f"[PING TESTE] Erro no cenário: {error}", flush=True)
         finally:
             self.stop_all()
+            self.export_results()
 
     def stop(self) -> None:
-        """Interrompe pausas e encerra todos os pings, inclusive ao fechar o Mininet."""
         self._stop_event.set()
         self.stop_all()
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=3)
+        self.export_results()
