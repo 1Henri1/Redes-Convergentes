@@ -11,7 +11,6 @@ informado a ``run_apps`` (``sdn_ddos.app``); por isso ela não é reexportada.
 
 import csv
 import logging
-import os
 import time
 from typing import Any, Dict
 
@@ -80,7 +79,7 @@ class SdnDdosController(app_manager.OSKenApp):
         self._icmp_stats: Dict[tuple, Dict[str, float]] = {}
         self._ping_results: Dict[str, Dict[str, int]] = {}
         self._counted_pings: set[tuple[str, str, int, int]] = set()
-        self._experiment_duration = float(os.getenv("SDN_EXPERIMENT_SECONDS", "0"))
+        self._experiment_duration = self._config.experiment_duration
         self._experiment_started_at: float | None = None
         self._experiment_finished = False
 
@@ -513,7 +512,7 @@ class SdnDdosController(app_manager.OSKenApp):
         ):
             return
 
-        path = os.getenv("SDN_EXPERIMENT_CSV", "resultado_experimento.csv")
+        path = "resultado_experimento.csv"
         with open(path, "w", newline="", encoding="utf-8") as csv_file:
             writer = csv.writer(csv_file)
             writer.writerow(["Origem", "Normais", "Bloqueadas", "Total"])
