@@ -614,7 +614,7 @@ class SdnDdosController(app_manager.OSKenApp):
         # Uma linha por ativação de bloqueio; o cenário verifica a interseção
         # entre esse intervalo e a execução de cada comando ping.
         with open(self._block_events_path, "a", encoding="utf-8") as events_file:
-            events_file.write(json.dumps(event) + "\\n")
+            events_file.write(json.dumps(event) + "\n")
         self._flows.install_drop(datapath, ip, duration)
         self._stats.blocks += 1
         self._reporter.block_activated(ip, duration)
