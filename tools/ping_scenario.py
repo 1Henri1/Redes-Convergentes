@@ -186,7 +186,6 @@ class PingScenario:
             if self._exported:
                 return
             commands = [c for c in self._commands if c["finalized"]]
-            self._exported = True
 
         totals = defaultdict(lambda: {"normais": 0, "bloqueadas": 0})
         for command in commands:
@@ -201,8 +200,11 @@ class PingScenario:
                 blocked = values["bloqueadas"]
                 writer.writerow([source, source_ip, normal, blocked, normal + blocked])
 
+        with self._lock:
+            self._exported = True
+
         print(
-            f"[PING TESTE] CSV exportado: {self._csv_path} "
+            f"[PING TESTE] CSV exportado: {self._csv_path.resolve()} "
             f"({len(commands)} comandos contabilizados).",
             flush=True,
         )
@@ -307,8 +309,13 @@ class PingScenario:
             self.export_results()
 
     def stop(self) -> None:
+        """Interrompe os pings e aguarda a thread exportar o CSV ao finalizar."""
         self._stop_event.set()
         self.stop_all()
+
         if self._thread and self._thread.is_alive():
-            self._thread.join(timeout=3)
-        self.export_results()
+            # A thread executa stop_all() e export_results() no finally de _run.
+            # Esperar sua conclusão evita exportar antes da finalização dos comandos.
+            self._thread.join()
+        else:
+            self.export_results()
