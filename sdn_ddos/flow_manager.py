@@ -60,10 +60,22 @@ class FlowManager:
         O timeout remove ambas as regras após o período de mitigação.
         """
         parser = datapath.ofproto_parser
+        # Envia uma cópia ao controlador para identificar o ID/sequência ICMP.
+        # Sem ação de saída para portas físicas, o pacote permanece descartado.
+        actions = [
+            parser.OFPActionOutput(
+                datapath.ofproto.OFPP_CONTROLLER,
+                datapath.ofproto.OFPCML_NO_BUFFER,
+            )
+        ]
+        instructions = [
+            parser.OFPInstructionActions(datapath.ofproto.OFPIT_APPLY_ACTIONS, actions)
+        ]
         for field in ("ipv4_src", "ipv4_dst"):
             match = parser.OFPMatch(eth_type=ether_types.ETH_TYPE_IP, **{field: ipv4_src})
             self._send_flow_mod(
-                datapath, BLOCK_PRIORITY, match, instructions=[], hard_timeout=hard_timeout
+                datapath, BLOCK_PRIORITY, match,
+                instructions=instructions, hard_timeout=hard_timeout
             )
     def forward_packet(self, datapath: Any, msg: Any, in_port: int, out_port: int) -> None:
         """Reenvia o pacote que causou o packet-in (via PacketOut).

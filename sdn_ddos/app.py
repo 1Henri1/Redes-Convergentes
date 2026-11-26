@@ -9,8 +9,9 @@ Importante: o OS-Ken só carrega a classe se ela estiver *definida* no módulo
 informado a ``run_apps`` (``sdn_ddos.app``); por isso ela não é reexportada.
 """
 
+import json
 import logging
-import statistics
+import os
 import time
 from typing import Any, Dict
 
@@ -28,7 +29,7 @@ from os_ken.ofproto import ofproto_v1_3
 
 from .blocklist import BlockList
 from .config import DetectorConfig
-from .detector import AnomalyDetector, DestinationConnectionDetector, DestinationPpsDetector
+from .detector import DestinationConnectionDetector, DestinationPpsDetector
 from .entropy import DestinationEntropyDetector
 from .flow_manager import FlowManager
 from .host_table import HostTable
@@ -51,7 +52,6 @@ class SdnDdosController(app_manager.OSKenApp):
         self._config = DetectorConfig.from_env()
         self._hosts = HostTable()
         self._rates = PortRateCalculator()
-        self._bps_detector = AnomalyDetector(self._config)
         # Cada servidor mantém sua própria baseline de PPS agregado recebido.
         self._destination_detectors: Dict[str, DestinationPpsDetector] = {}
         # Baseline agregada de bytes/s por destino; apenas informativa, não bloqueia.
@@ -70,7 +70,6 @@ class SdnDdosController(app_manager.OSKenApp):
         self._destination_anomaly_start: Dict[str, int] = {}
         self._destination_candidates: Dict[str, set[str]] = {}
         # Últimas estatísticas limpas; ficam congeladas enquanto houver suspeita.
-        self._destination_metric_snapshots: Dict[str, tuple[float, float, float, float, float, float]] = {}
         self._blocklist = BlockList(self._config.block_time)
         self._flows = FlowManager()
         self._reporter = ConsoleReporter()
@@ -79,6 +78,13 @@ class SdnDdosController(app_manager.OSKenApp):
         # Telemetria dos pings manuais: chave do pedido = IPs, ID ICMP e sequência.
         self._icmp_pending: Dict[tuple, tuple[float, tuple]] = {}
         self._icmp_stats: Dict[tuple, Dict[str, float]] = {}
+        # Arquivo compartilhado com tools/ping_scenario.py. Os dois processos
+        # usam time.monotonic() do mesmo sistema operacional.
+        self._block_events_path = os.getenv(
+            "SDN_DDOS_BLOCK_EVENTS_PATH", "/tmp/sdn_ddos_block_events.jsonl"
+        )
+        with open(self._block_events_path, "w", encoding="utf-8"):
+            pass
 
         self._reporter.banner(self._config)
         self._monitor_thread = hub.spawn(self._monitor_loop)
@@ -120,7 +126,6 @@ class SdnDdosController(app_manager.OSKenApp):
                 self._destination_entropy_detectors.pop(ip, None)
                 self._destination_anomaly_start.pop(ip, None)
                 self._destination_candidates.pop(ip, None)
-                self._destination_metric_snapshots.pop(ip, None)
             for pair in list(self._pair_first_seen_cycle):
                 if pair[0] in disconnected_ips or pair[1] in disconnected_ips:
                     self._pair_first_seen_cycle.pop(pair, None)
@@ -316,7 +321,6 @@ class SdnDdosController(app_manager.OSKenApp):
                     self._destination_zero_cycles.pop(dst, None)
                     self._destination_anomaly_start.pop(dst, None)
                     self._destination_candidates.pop(dst, None)
-                    self._destination_metric_snapshots.pop(dst, None)
                     for pair in list(self._pair_first_seen_cycle):
                         if pair[1] == dst:
                             self._pair_first_seen_cycle.pop(pair, None)
@@ -340,51 +344,58 @@ class SdnDdosController(app_manager.OSKenApp):
             connection_detector = self._destination_connection_detectors.setdefault(
                 dst, DestinationConnectionDetector(self._config)
             )
-            if entropy_result.anomalous:
-                # Suspende a análise transversal durante o padrão distribuído
-                # e zera sequências antigas para não misturar ciclos separados.
-                connection_detector.reset()
-                connection_results = {}
+            # Durante uma suspeita distribuída, continua comparando cada origem
+            # com os últimos limites estatísticos válidos, sem recalculá-los.
+            if entropy_result.baseline_ready:
+                # Só inicia a detecção individual depois que a baseline
+                # conjunta do destino foi concluída. O primeiro ciclo após
+                # isso inicializa os limites de PPS/bytes/s; a classificação
+                # de anomalias começa no ciclo seguinte.
+                connection_results = connection_detector.evaluate(
+                    destination_rates,
+                    cycle,
+                    update_baseline=not entropy_result.anomalous,
+                )
             else:
-                connection_results = connection_detector.evaluate(destination_rates, cycle)
+                # Durante a coleta da baseline, todas as origens são apenas
+                # contextuais: não há classificação nem sequência de bloqueio.
+                connection_results = {
+                    src: {
+                        "PPS": Detection(
+                            DetectionStatus.BASELINE, float(rate.pps),
+                            len(destination_rates),
+                        ),
+                        "BYTES/S": Detection(
+                            DetectionStatus.BASELINE, float(rate.bps),
+                            len(destination_rates),
+                        ),
+                    }
+                    for src, rate in destination_rates.items()
+                }
 
-            # Avalia bytes/s somente depois da entropia. Se o destino estiver
-            # suspeito de DDoS, nenhuma amostra dele atualiza a baseline global.
+            # PPS e bytes/s usam exclusivamente os mesmos limites compartilhados
+            # calculados para o destino. Não existe um segundo detector de bytes/s
+            # com baseline independente, pois ele poderia gerar bloqueios divergentes.
             pair_bps_results = {}
-            suspicious_sources = {
-                src for src, metrics in connection_results.items()
-                if any(result.status is DetectionStatus.ANOMALY for result in metrics.values())
-            }
             dos_sources = set()
             for src, rate in destination_rates.items():
                 datapath = self._datapath_for_ip(src)
                 if datapath is None:
                     continue
-                pair_result = self._process_pair_rate(
-                    datapath, src, dst, rate, icmp_interval.get((src, dst)),
-                    pps_detection=connection_results.get(src, {}).get("PPS"),
-                    update_baseline=not entropy_result.anomalous and src not in suspicious_sources,
-                )
-                pair_bps_results[(src, dst)] = pair_result
-                if pair_result.status is DetectionStatus.ANOMALY:
-                    suspicious_sources.add(src)
-
-            for src in destination_rates:
                 metrics = connection_results.get(src, {})
                 pps_result = metrics.get("PPS")
                 bytes_result = metrics.get("BYTES/S")
-                pair_bytes_result = pair_bps_results.get((src, dst))
+                pair_result = self._process_pair_rate(
+                    datapath, src, dst, rate, icmp_interval.get((src, dst)),
+                    bps_detection=bytes_result,
+                    pps_detection=pps_result,
+                )
+                pair_bps_results[(src, dst)] = pair_result
                 if (
                     (pps_result is not None and pps_result.should_block)
                     or (bytes_result is not None and bytes_result.should_block)
-                    or (pair_bytes_result is not None and pair_bytes_result.should_block)
                 ):
                     dos_sources.add(src)
-
-            # Uma anomalia em qualquer métrica torna a origem suspeita para
-            # todas as médias. Entropia anômala torna suspeitas todas as origens.
-            if entropy_result.anomalous:
-                suspicious_sources.update(destination_rates)
 
             # Mantém apenas origens recentes como candidatas à atribuição do DDoS.
             lookback = max(self._config.baseline_samples, self._config.required_anomalies + 1)
@@ -418,46 +429,27 @@ class SdnDdosController(app_manager.OSKenApp):
                     total_pps, total_bps, entropy_result.entropy_bits,
                 )
             else:
-                # Limites efetivamente calculados neste ciclo. N/A significa
-                # que a análise transversal foi suspensa ou não há origem ativa.
-                pps_limit = next(
-                    (metrics["PPS"].limit for metrics in connection_results.values()
-                     if metrics.get("PPS") is not None),
+                # O relatório usa exatamente as referências presentes nas
+                # detecções, isto é, os limites do ciclo anterior aplicados
+                # neste ciclo. Não recalcula médias com o tráfego atual.
+                pps_reference = next(
+                    (metrics["PPS"] for metrics in connection_results.values()
+                     if metrics.get("PPS") is not None
+                     and metrics["PPS"].mean is not None),
                     None,
                 )
-                bytes_limit = next(
-                    (metrics["BYTES/S"].limit for metrics in connection_results.values()
-                     if metrics.get("BYTES/S") is not None),
+                bytes_reference = next(
+                    (metrics["BYTES/S"] for metrics in connection_results.values()
+                     if metrics.get("BYTES/S") is not None
+                     and metrics["BYTES/S"].mean is not None),
                     None,
                 )
-
-                # Um sinal suspeito congela o conjunto inteiro de métricas do
-                # destino. Sem histórico anterior, usa somente origens limpas.
-                snapshot = self._destination_metric_snapshots.get(dst)
-                clean_sources = [
-                    src for src in destination_rates
-                    if src not in suspicious_sources
-                ]
-                if suspicious_sources and snapshot is not None:
-                    pps_mean, pps_std, _, bytes_mean, bytes_std, _ = snapshot
-                elif clean_sources:
-                    pps_values = [float(destination_rates[src].pps) for src in clean_sources]
-                    bytes_values = [float(destination_rates[src].bps) for src in clean_sources]
-                    pps_mean = statistics.fmean(pps_values)
-                    bytes_mean = statistics.fmean(bytes_values)
-                    pps_std = statistics.stdev(pps_values) if len(pps_values) > 1 else 0.0
-                    bytes_std = statistics.stdev(bytes_values) if len(bytes_values) > 1 else 0.0
-                    if not suspicious_sources:
-                        self._destination_metric_snapshots[dst] = (
-                            pps_mean, pps_std, pps_limit,
-                            bytes_mean, bytes_std, bytes_limit,
-                        )
-                elif snapshot is not None:
-                    # Ex.: última origem foi bloqueada. Preserva as últimas
-                    # estatísticas válidas até o destino expirar (2 ciclos).
-                    pps_mean, pps_std, _, bytes_mean, bytes_std, _ = snapshot
-                else:
-                    pps_mean = pps_std = bytes_mean = bytes_std = 0.0
+                pps_mean = pps_reference.mean if pps_reference else 0.0
+                pps_std = pps_reference.std if pps_reference else 0.0
+                pps_limit = pps_reference.limit if pps_reference else None
+                bytes_mean = bytes_reference.mean if bytes_reference else 0.0
+                bytes_std = bytes_reference.std if bytes_reference else 0.0
+                bytes_limit = bytes_reference.limit if bytes_reference else None
                 self._reporter.destination_result(
                     dst, total_pps, total_bps, len(destination_rates),
                     pps_mean, pps_std, bytes_mean, bytes_std,
@@ -479,6 +471,7 @@ class SdnDdosController(app_manager.OSKenApp):
                 else:
                     self._reporter.destination_without_attribution(dst)
                 self._destination_candidates.pop(dst, None)
+
 
 
     def _record_packet(self, pkt: packet.Packet) -> None:
@@ -584,15 +577,15 @@ class SdnDdosController(app_manager.OSKenApp):
     def _process_pair_rate(
         self, datapath: Any, src: str, dst: str, rate: Any,
         icmp_stats: Dict[str, float] | None = None,
+        bps_detection: Detection | None = None,
         pps_detection: Detection | None = None,
-        update_baseline: bool = True,
     ) -> Detection:
-        """Exibe e retorna a detecção de bytes/s; pode congelar a baseline."""
+        """Exibe as detecções do par usando os limites compartilhados do destino."""
         pair_id = "{}->{}".format(src, dst)
-        bps_detection = self._bps_detector.evaluate(
-            pair_id, rate.bps, minimum_rate=0.0,
-            update_baseline=update_baseline,
-        )
+        # Durante a suspensão da análise transversal por entropia, não inventa
+        # um limite individual: registra a métrica como contextual, sem bloquear.
+        if bps_detection is None:
+            bps_detection = Detection(DetectionStatus.BASELINE, rate.bps, 0)
         self._reporter.pair_result(
             src, dst, rate, bps_detection,
             self._config.required_anomalies, icmp_stats, pps_detection,
@@ -602,11 +595,26 @@ class SdnDdosController(app_manager.OSKenApp):
             self._reporter.anomaly(
                 pair_id, bps_detection, self._config.required_anomalies, "bytes/s"
             )
+        if pps_detection is not None and pps_detection.status is DetectionStatus.ANOMALY:
+            self._stats.detections += 1
+            self._reporter.anomaly(
+                pair_id, pps_detection, self._config.required_anomalies, "PPS"
+            )
         return bps_detection
 
     def _block(self, datapath: Any, ip: str) -> None:
-        """Aplica o bloqueio no switch e o registra no controlador."""
-        self._flows.install_drop(datapath, ip, self._config.block_time)
-        self._blocklist.block(ip)
+        """Aplica bloqueio progressivo e registra sua duração efetiva."""
+        block_started = time.monotonic()
+        duration = self._blocklist.block(ip)
+        event = {
+            "ip": ip,
+            "start": block_started,
+            "end": block_started + duration,
+        }
+        # Uma linha por ativação de bloqueio; o cenário verifica a interseção
+        # entre esse intervalo e a execução de cada comando ping.
+        with open(self._block_events_path, "a", encoding="utf-8") as events_file:
+            events_file.write(json.dumps(event) + "\n")
+        self._flows.install_drop(datapath, ip, duration)
         self._stats.blocks += 1
-        self._reporter.block_activated(ip, self._config.block_time)
+        self._reporter.block_activated(ip, duration)

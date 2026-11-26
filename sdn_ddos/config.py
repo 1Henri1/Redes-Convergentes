@@ -18,24 +18,26 @@ _MAX_OPENFLOW_TIMEOUT = 65535
 class DetectorConfig:
     """Parâmetros de monitoramento, detecção e mitigação."""
 
-    monitor_interval: float = 4.0
-    report_interval: float = 10.0
+    monitor_interval: float = 3.0
+    report_interval: float = 06.0
     baseline_samples: int = 5
     history_size: int = 20
     threshold_factor: float = 3.0
     min_rate_factor: float = 1.5
-    minimum_pps: float = 10.0
-    entropy_threshold_factor: float = 3.0
-    minimum_entropy_factor: float = 1.5
+    minimum_pps: float = 05.0
+    entropy_threshold_factor: float = 2.0
+    minimum_entropy_factor: float = 1.1
     minimum_distributed_sources: int = 2
-    required_anomalies: int = 2
+    required_anomalies: int = 3
     block_time: int = 30
+    experiment_duration: float = 300.0
 
     def __post_init__(self) -> None:
         """Valida os parâmetros logo na criação (fail-fast)."""
         rules = (
             (self.monitor_interval > 0, "monitor_interval deve ser > 0"),
             (self.report_interval > 0, "report_interval deve ser > 0"),
+            (self.experiment_duration > 0, "experiment_duration deve ser > 0"),
             (self.baseline_samples >= 2, "baseline_samples deve ser >= 2"),
             (
                 self.history_size >= self.baseline_samples,
