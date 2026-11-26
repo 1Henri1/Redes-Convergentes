@@ -275,7 +275,7 @@ class PingScenario:
                     count=rd.randint(200, 300),
                     packet_size=rd.randint(50, 85),
                 )
-                self.wait(rd.uniform(1.5, 2.5))
+                self.wait(rd.uniform(2, 3))
         return 0 if Group == 1 else 1
 
     def AtaqDos(self, cont: int) -> None:
@@ -290,7 +290,7 @@ class PingScenario:
                     count=rd.randint(500, 700),
                     packet_size=rd.randint(50, 125),
                 )
-                self.wait(rd.uniform(1.5, 2.5))
+                self.wait(rd.uniform(2, 3))
 
     def AtaqDDos(self, cont: int) -> None:
         """DDoS: hosts 13 a 24, cada um com 80% de chance."""
@@ -314,10 +314,10 @@ class PingScenario:
         grupo = self.Normal(grupo, cont)
         cont += 1
 
-        while cont < 50:
+        while cont < 100:
             tipo = rd.choices(
                 ["normal", "dos", "ddos"],
-                weights=[60, 20, 20],
+                weights=[80, 10, 10],
                 k=1,
             )[0]
             if tipo == "normal":
@@ -327,7 +327,6 @@ class PingScenario:
             else:
                 self.AtaqDDos(cont)
             cont += 1
-            self.wait(rd.uniform(2, 4))
 
     def start(self, net) -> None:
         if self._thread and self._thread.is_alive():

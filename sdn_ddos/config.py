@@ -18,17 +18,17 @@ _MAX_OPENFLOW_TIMEOUT = 65535
 class DetectorConfig:
     """Parâmetros de monitoramento, detecção e mitigação."""
 
-    monitor_interval: float = 2.0
-    report_interval: float = 04.0
+    monitor_interval: float = 3.0
+    report_interval: float = 06.0
     baseline_samples: int = 5
     history_size: int = 20
     threshold_factor: float = 3.0
     min_rate_factor: float = 1.5
     minimum_pps: float = 05.0
-    entropy_threshold_factor: float = 3.0
-    minimum_entropy_factor: float = 1.2
+    entropy_threshold_factor: float = 2.0
+    minimum_entropy_factor: float = 1.1
     minimum_distributed_sources: int = 2
-    required_anomalies: int = 2
+    required_anomalies: int = 3
     block_time: int = 30
     experiment_duration: float = 300.0
 
